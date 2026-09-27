@@ -256,20 +256,9 @@ const RING_FADE_DURATION = 1.4;               // フェードインの秒数(仮
 //   設定する(新たにCubeCameraを増やすと重くなるため、既存の1つを使い回すため)。
 const RING_METALNESS = 1;
 const RING_ROUGHNESS = 0.0; // 仮値。鏡(0.05)ほどは滑らかにせず、金属らしい艶にした
-// ★ 2026-09-19 追加(ご指摘反映):「鏡tripodがほとんど何も映らない」への対応。
-//   原因は、鏡・このリングどちらが使っているenvMap(record.js側のCubeCamera)も、
-//   THREE.WebGLRenderer.render()を直接呼ぶだけの「素の」撮影だという点にあった。
-//   このプロジェクトの見た目の明るさ・賑やかさの大部分はcomposer側のBloom
-//   (UnrealBloomPass。main.js冒頭のexcludeFromBloom等を参照)が担っているが、
-//   CubeCamera.update()はcomposerを一切経由しないため、Bloom適用前の、実際よりずっと
-//   暗く・素っ気ない状態のシーンを撮影してしまう。これがそのままenvMapとして使われる
-//   ため、反射面(鏡・このリング)が「ほとんど何も映っていない」ように見えていた
-//   (Bloomは元から存在するので、これは今回に限らず以前から起きていた現象のはず)。
-//   Bloom込みで撮り直す(=CubeCameraをもう1系統composerで撮る)のは重くなりすぎるため、
-//   代わりに反射側のenvMapIntensityを底上げすることで、最終的な(Bloom込みの)画面に
-//   合成されたときの見え方を補っている。
-//   ★ ここが調整箇所です: 反射がまだ物足りない場合はこの値をさらに上げてください。
-export const REFLECTIVE_ENV_MAP_INTENSITY = 3.0; // 仮値。以前は鏡・リングとも未設定(既定の1)だった
+// ★ 2026-09-19 削除(ご指摘反映): 「REFLECTIVE_ENV_MAP_INTENSITY=3.0はなしにしておいて。
+//   別のバグを探してるときに間違って実装した」とのことなので撤去し、envMapIntensityは
+//   指定しない(既定の1)へ戻した。
 function makeGoldenRing() {
   const geometry = new THREE.TorusGeometry(TRIPOD_RADIUS, RING_TUBE_RADIUS, 16, 128);
   const material = new THREE.MeshStandardMaterial({
@@ -277,7 +266,6 @@ function makeGoldenRing() {
     metalness: RING_METALNESS,
     roughness: RING_ROUGHNESS,
     envMap: null,
-    envMapIntensity: REFLECTIVE_ENV_MAP_INTENSITY,
     transparent: true,
     opacity: 0,
   });
