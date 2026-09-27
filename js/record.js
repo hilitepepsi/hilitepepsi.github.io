@@ -5,6 +5,7 @@ import { TRIPOD_ANGULAR_SPEED } from './universe.js';
 import { ORBIT_RADIUS_BASE, setOrbitRadius, setOrbitCenter, growOrbitToFull } from './solarSystem.js';
 import { GALAXY_RADIUS, setGalaxyInnerRadius, createStarPointsMaterial, setGalaxySpinBoost, setGalaxyDifferentialRotation } from './galaxy.js';
 import { createCaptionBox, makeCaptionController } from './captions.js';
+import { createTrumpetToMetaphony } from './trumpet.js';
 
 // ══════════════════════════════════════════════════════════════
 // ── 「レコードプレーヤー(操作パネル)」演出 ───────────────────
@@ -52,6 +53,10 @@ const MIRROR_ENV_RESOLUTION = 256;                     // キューブカメラ�
 // updateRecordDisplay内での毎フレーム追従の両方で同じ値を使う。
 const CUBE_CAMERA_Y_OFFSET = MIRROR_APEX_HEIGHT * 0.5;
 const _cubeCameraOffset = new THREE.Vector3(0, CUBE_CAMERA_Y_OFFSET, 0); // 毎フレームのnew Vector3()を避けるための使い回し用
+// ★ 追加: 鏡が消えてgoldenRing(+その上のih)段階に入った後は、リングそのものの高さより
+//   少し上(=ihがいる高さ付近)を撮影点にする(仮値。見ながら調整してください)。
+const GOLDEN_RING_CUBE_CAMERA_Y_OFFSET = AXIS_LENGTH * 0.35;
+const _goldenRingCubeCameraOffset = new THREE.Vector3(0, GOLDEN_RING_CUBE_CAMERA_Y_OFFSET, 0);
 const MIRROR_TARGET_PAGE = 'prism2.html';               // 鏡クリックで遷移する先
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
@@ -86,6 +91,10 @@ function loadGLTFScene(path) {
 // ── ①戴冠(5秒): crown.glbがバナナの上空からtweenで落下し、着地する ─────
 const CORONATION_TEXT = 'I wanted to speak between any two points by way of a foolish circle!\n― Metaphony';
 const CORONATION_DURATION = 10.0;             // ①戴冠にかける秒数
+// ★ 2026-09-19 追加(ご指示反映):「銀河を二倍にする」への対応。carousel側を縮める
+//   方式(main.js側で廃止済み)ではなく、銀河自体をこの倍率まで拡大する方針にした。
+//   戴冠演出のリング拡大(growCrossfadeRing)と同時にtweenする(下記参照)。
+const GALAXY_OVERVIEW_SCALE = 2;
 const CROWN_DROP_START_HEIGHT = AXIS_LENGTH * 0.6; // バナナの上、どれだけ高い位置から降ってくるか(仮値)
 const CROWN_SCALE = 0.2; // 仮値。実際のcrown.glbのサイズを見て調整してください
 let coronationCaption = null; // 遅延生成(#axisHint等とは別の、画面下75%専用の要素)
@@ -392,7 +401,7 @@ function playCoronationSequence(record) {
   //   非表示に戻されないよう、tripodRingSwap.js側に強制表示を依頼する。
   record.coronationLockVisible = true;
 
-  const { bananaMesh, crownGroup, bulge, galaxy } = record;
+  const { bananaMesh, crownGroup, bulge, galaxy, tonearm, galaxyCenter } = record;
   const caption = getCoronationCaption();
 
   // ① 戴冠(5秒): crown.glbをバナナの上空からtweenで落下させる(mirrorVisualAnchor内のローカル座標)。
@@ -406,6 +415,33 @@ function playCoronationSequence(record) {
   //   もとからあるリング自身を拡大する。太陽系が実際に召喚された時点
   //   (revealSolarSystem内)で、この拡大したリングを消す。
   growCrossfadeRing(record.crossfadeRing, { targetRadius: ORBIT_RADIUS_BASE, duration: CORONATION_DURATION });
+  // ★ 2026-09-19 追加(ご指示反映): 「BLOOMリング(=crossfadeRing)が大きくなるときに、
+  //   一緒に銀河も拡大。トーンアームも位置とスケールを変えてほしい」への対応。
+  //   上のgrowCrossfadeRingと全く同じ秒数・イージングで、1本のtweenが持つ倍率k(1→
+  //   GALAXY_OVERVIEW_SCALE)を使い、銀河本体(galaxy.starsGroup.scale)とトーンアーム
+  //   (record.tonearm)の両方を同時に更新する。1本のtweenにまとめているので、両者の
+  //   拡大が完全にズレなく同期する。
+  //   トーンアームは「pivot(=アームの支点。makeTonearmが一度だけ計算した固定値)を
+  //   galaxyCenterからの相対位置ごとk倍に引き離しつつ(=盤の外周が広がるのに追従)、
+  //   アーム自体の見た目もgroup.scaleでk倍にする(支点そのものは動かさず、その場で
+  //   大きくなる)」という、carousel縮小のときと同じ考え方の「中心からの相対位置をk倍」
+  //   スケーリングを適用する。
+  const tonearmPivotOffset = tonearm ? tonearm.position.clone().sub(galaxyCenter) : null;
+  if (record.overviewScaleTween) record.overviewScaleTween.kill();
+  const overviewScaleState = { k: 1 };
+  record.overviewScaleTween = gsap.to(overviewScaleState, {
+    k: GALAXY_OVERVIEW_SCALE,
+    duration: CORONATION_DURATION,
+    ease: 'power2.inOut',
+    onUpdate: () => {
+      const k = overviewScaleState.k;
+      galaxy.starsGroup.scale.setScalar(k);
+      if (tonearm) {
+        tonearm.position.copy(galaxyCenter).addScaledVector(tonearmPivotOffset, k);
+        tonearm.scale.setScalar(k);
+      }
+    },
+  });
 
   gsap.to(crownGroup.position, {
     y: bananaMesh.position.y + BANANA_RADIUS * 0.6, // バナナの上に軽く乗る高さ(仮値)
@@ -459,12 +495,22 @@ function playCoronationSequence(record) {
     // (バラバラのタイミングでフェードすると、コアだけ先に見えてしまう等
     // 不自然になるのを避けるため)。scaleも同じtに合わせて拡大させる。
     const bulgeReveal = { t: 0 };
+    // ★ バグ修正(ご指摘反映): 「太陽軌道を二倍にしたら、バルジがその直径サイズまで
+    //   大きくなってしまった」への対応。原因はここではなく、bulgeがgalaxy.starsGroupの
+    //   子であること(1152〜1162行目参照)。playCoronationSequence側でgrowCrossfadeRing
+    //   と同時にgalaxy.starsGroup.scaleを1→GALAXY_OVERVIEW_SCALE(=2)へtweenしているため、
+    //   bulge自身のローカルscaleを1にしても、実際の見た目のサイズは
+    //   1(ローカル) × 2(親のstarsGroup) = 2倍になってしまっていた
+    //   (=太陽軌道の半径ぴったりに見えるはずが、直径サイズまで膨らんで見えていた)。
+    //   bulgeのローカルscaleの目標値を1/GALAXY_OVERVIEW_SCALEにしておくことで、
+    //   親の2倍と打ち消し合い、実際の見た目のサイズを元通り(太陽軌道の半径サイズ)に戻す。
+    const bulgeTargetScale = 1 / GALAXY_OVERVIEW_SCALE;
     gsap.to(bulgeReveal, {
       t: 1,
       duration: BULGE_REVEAL_FADE_DURATION,
       onUpdate: () => {
         bulge.userData.materials.forEach((m) => { m.uniforms.uAlpha.value = bulgeReveal.t; });
-        bulge.scale.setScalar(THREE.MathUtils.lerp(BULGE_REVEAL_START_SCALE, 1, bulgeReveal.t));
+        bulge.scale.setScalar(THREE.MathUtils.lerp(BULGE_REVEAL_START_SCALE, bulgeTargetScale, bulgeReveal.t));
       },
     });
 
@@ -841,7 +887,109 @@ function placeTonearmOnRecord(record) {
       // ★ 追加: 銀河俯瞰中は「中心に近いほど角速度が速い」差動回転にしていたが、
       //   アームを置いたのでここで通常の剛体回転(現状の仕様)へ戻す。
       setGalaxyDifferentialRotation(record.galaxy, false);
+      // ★ 追加: アームが置き終わってから2秒後に、ラッパ(Metaphonyホーン)を発動する。
+      gsap.delayedCall(TRUMPET_DELAY_SECONDS, () => triggerTrumpet(record));
     },
+  });
+}
+
+// トーンアーム設置の TRUMPET_DELAY_SECONDS 秒後に呼ばれる。
+// 位置・サイズ・向きを決めてvisibleをtrueにし、reveal(0→1)のアニメーションを開始する。
+// ★ 実験段階のご指示反映: 文字面(Metaphonyの文字が乗っている平面)を、
+//   カメラの画面(view plane)と平行になるように向ける。
+const TRUMPET_DELAY_SECONDS = 2;
+const TRUMPET_DRAW_SECONDS = 3; // groupA(ラッパ→文字)を描き切るのにかける時間(仮値)
+const TRUMPET_SIZE_RATIO = 2; // 銀河の最終サイズに対する倍率(2=銀河の2倍の大きさ)
+// 銀河はこの演出の最後にGALAXY_OVERVIEW_SCALE倍まで拡大される(playCoronationSequence参照)ので、
+// GALAXY_RADIUS(拡大前の基準値)ではなく、拡大後の最終サイズを基準にホーンのサイズを合わせる。
+const TRUMPET_TARGET_RADIUS = GALAXY_RADIUS * GALAXY_OVERVIEW_SCALE * TRUMPET_SIZE_RATIO; // ホーンの目標バウンディング半径
+const TRUMPET_BACK_LEFT_DISTANCE_RATIO = 0.8; // レコード中心からの距離(ホーンの目標サイズに対する比率。仮値)
+const TRUMPET_HEIGHT_ABOVE_RECORD = GALAXY_RADIUS *1.3; // 「レコードより少し高いだけ」の仮値(レコード自体のスケール基準)
+// ★ 上下反転について: 以前はローカルの上下軸(U)の符号を反転させることで実現しようと
+//   していたが、これは文字面の生成ロジック(letterUp/letterForwardBentの向き)と絡み合い、
+//   狙った上下反転ではなく別の見た目の反転(左右ミラーのような結果)を招いてしまっていた。
+//   代わりに、カメラ向きの基準姿勢(下のrotMatrix)を一度正しく組んでから、その後に
+//   ワールド空間の「水平な横軸(Rw=カメラから見て左右方向の軸)」まわりに180度、
+//   純粋な回転(ミラーではない)を追加で掛けることで上下を反転させる。この軸まわりの
+//   180度回転は、上下(Uw)と前後(Nw、口の向き)を連動して反転させるが、それは
+//   鏡映ではなく正しい回転操作なので、形状が歪んだり反転して見えたりすることはない。
+const TRUMPET_FLIP_VERTICAL_180 = true; // true=水平軸まわりに180度回転して上下反転/false=反転なし
+// 関数全体の「進行方向」(trumpetApi.localAxes.forward。ラッパ→sin波→文字が伸びていく向き)は、
+// 上のrotMatrixにより現状ちょうどRw(カメラから見て真水平・左右方向の軸)に一致している。
+// これをNw(カメラ方向)軸まわりに回転させると、文字面がカメラを向いたまま
+// (=画面内での回転になるので歪まない)、進行方向だけを画面内で上下に振れる。
+// 角度は「進行方向からUwに向かう向き」を正としているので、正の値で上向きに傾く。
+const TRUMPET_TILT_UP_DEGREES = 30; // 進行方向を水平から何度上に傾けるか
+function triggerTrumpet(record) {
+  const { trumpetGroup, trumpetApi, galaxyCenter } = record;
+  if (!trumpetGroup || !trumpetApi || trumpetGroup.userData.triggered) return; // 二重発火防止
+  trumpetGroup.userData.triggered = true;
+
+  // サイズ: 「銀河の2倍ぐらいの大きさ」。生成時(スケール1)に測っておいた
+  // バウンディング半径(trumpetApi.baseRadius)を基準に、TRUMPET_TARGET_RADIUSへ一様スケールする。
+  const scale = TRUMPET_TARGET_RADIUS / trumpetApi.baseRadius;
+  trumpetGroup.scale.setScalar(scale);
+
+  // 位置: カメラ(UNIVERSE_CAMERA_POS→UNIVERSE_CAMERA_TARGET)から見て、
+  // レコード(銀河)の左奥。高さはレコードよりわずかに高いだけ。
+  // (ホーンが大きくなった分、中心からの距離もTRUMPET_TARGET_RADIUS基準にしてある)
+  const forward = UNIVERSE_CAMERA_TARGET.clone().sub(UNIVERSE_CAMERA_POS).normalize();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const camRight = new THREE.Vector3().crossVectors(forward, worldUp).normalize();
+  const backLeftDir = forward.clone().sub(camRight).normalize(); // 奥(forward)+左(-camRight)の合成方向
+  trumpetGroup.position.copy(galaxyCenter)
+    .addScaledVector(backLeftDir, TRUMPET_TARGET_RADIUS * TRUMPET_BACK_LEFT_DISTANCE_RATIO)
+    .add(new THREE.Vector3(0, TRUMPET_HEIGHT_ABOVE_RECORD, 0));
+
+  // 向き(実験): Metaphonyの文字面(trumpetApi.localAxes.normalが法線)を、
+  // カメラの画面と平行に(=カメラの方を向くように)する。ここでは疑似ミラーの符号操作は
+  // 一切行わず、生成時のローカル軸(forward/up/normal)をそのままカメラ向きの基準姿勢に
+  // 対応させるだけ。上下反転が必要な場合は、この基準姿勢を組んだ後に別途、水平軸まわりの
+  // 180度回転(下記)を掛ける。
+  const N = trumpetApi.localAxes.normal.clone();
+  const U = trumpetApi.localAxes.up.clone();
+  const R = new THREE.Vector3().crossVectors(U, N).normalize(); // ローカル右方向(口の向きに相当)
+
+  const Nw = forward.clone().negate(); // カメラの方を向く(=カメラ面と平行)
+  const worldUpRef = new THREE.Vector3(0, 1, 0);
+  let Uw = worldUpRef.clone().addScaledVector(Nw, -worldUpRef.dot(Nw)); // Nwに直交する成分だけ残す
+  if (Uw.lengthSq() < 1e-6) Uw = new THREE.Vector3(0, 0, 1); // Nwがworld upとほぼ平行なときの保険
+  Uw.normalize();
+  const Rw = new THREE.Vector3().crossVectors(Uw, Nw).normalize();
+
+  const localBasis = new THREE.Matrix4().makeBasis(R, U, N);
+  const worldBasis = new THREE.Matrix4().makeBasis(Rw, Uw, Nw);
+  // localBasisは正規直交なので、逆行列=転置行列でよい
+  const rotMatrix = worldBasis.multiply(localBasis.transpose());
+  trumpetGroup.quaternion.setFromRotationMatrix(rotMatrix);
+
+  // 上下反転(必要な場合): 上で組んだ基準姿勢に対して、ワールド空間の水平軸(Rw)まわりに
+  // 180度回転を追加で掛ける。premultiplyなのでワールド空間での回転として作用し、
+  // Uw(上下)とNw(前後・口の向き)がその場で入れ替わる、正真正銘の回転。
+  if (TRUMPET_FLIP_VERTICAL_180) {
+    const flipQuat = new THREE.Quaternion().setFromAxisAngle(Rw, Math.PI);
+    trumpetGroup.quaternion.premultiply(flipQuat);
+  }
+
+  // 進行方向を水平(Rw)から上向きに傾ける: Nw(カメラ方向)軸まわりの回転なら、
+  // 文字面がカメラを向いたまま(=画面と平行なまま)、進行方向だけを画面内で回せる。
+  if (TRUMPET_TILT_UP_DEGREES) {
+    const tiltQuat = new THREE.Quaternion().setFromAxisAngle(Nw, THREE.MathUtils.degToRad(TRUMPET_TILT_UP_DEGREES));
+    trumpetGroup.quaternion.premultiply(tiltQuat);
+  }
+
+  trumpetGroup.visible = true;
+
+  // 「一括表示」ではなく、groupA(ラッパ→sin波→文字本体)をgsapで0→1へ伸ばして描く。
+  // groupB(t/hの横線)・完成後のホールド・フェードアウトはtrumpetApi.update(elapsed)側が
+  // 自動でやってくれる(updateRecordDisplay内で毎フレーム呼んでいる)ので、ここではgroupAの
+  // reveal(t)だけを進めればよい。
+  const drawProgress = { t: 0 };
+  gsap.to(drawProgress, {
+    t: 1,
+    duration: TRUMPET_DRAW_SECONDS,
+    ease: 'power1.out',
+    onUpdate: () => trumpetApi.reveal(drawProgress.t),
   });
 }
 // ══════════════════════════════════════════════════════════════
@@ -926,7 +1074,7 @@ function createMirrorMaterial() {
 //   orbitRing(専用の別メッシュ)は不要になったため削除した。
 // ══════════════════════════════════════════════════════════════
 const CROSSFADE_RING_TUBE_RADIUS = AXIS_LENGTH * 0.018; // universe.js側のRING_TUBE_RADIUSと同じ値(仮値)
-const CROSSFADE_RING_COLOR = 0xffcc33; // universe.js側のRING_COLORと同じ値(仮値)。従来通りの非金属な単色
+const CROSSFADE_RING_COLOR = 0xffcc33; // universe.js側のRING_COLORと同じ値(仮値)。非金属な単色に戻した
 
 // RING_DOWN_Y⇔バナナの高さを上下する「引き継ぎ」用のリング(従来通りの見た目)。
 // 戴冠演出中はこのリング自身が拡大→消滅する(下記growCrossfadeRing/hideCrossfadeRing)。
@@ -1161,11 +1309,26 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   // 右奥の角に固定位置で配置する(位置のみ。太陽系での動き・クリックでの動きは未実装)。
   const tonearm = makeTonearm(scene, renderer, galaxy.starsGroup.position);
 
+  // ★ 追加: トーンアーム設置の2秒後に発動する「ラッパ(Metaphonyロゴ→蓄音機のホーン)」。
+  //   位置・サイズ・回転はtriggerTrumpet()が計算して当てはめるので、ここでは
+  //   スケール1・回転なしの状態で生成し、その時点でのバウンディング半径だけを測っておく
+  //   (triggerTrumpet側で「銀河と同じぐらいの大きさ」に一様スケールする基準に使う)。
+  const trumpetGroup = new THREE.Group();
+  trumpetGroup.visible = false;
+  scene.add(trumpetGroup);
+  const trumpetApi = createTrumpetToMetaphony(trumpetGroup);
+  // ★ Box3.setFromObject/computeBoundingBoxはgeometryのposition属性全体を見るため、
+  //   drawRange(reveal未実行=何も描かれていない状態)には影響されない。なのでここでは
+  //   まだ何も描画させず(=登場時のアニメーションをそのまま使えるようにしたまま)、
+  //   素の(スケール1の)バウンディング半径だけを測っておく。
+  const trumpetBaseSphere = new THREE.Box3().setFromObject(trumpetGroup).getBoundingSphere(new THREE.Sphere());
+  trumpetApi.baseRadius = trumpetBaseSphere.radius;
+
   return {
     scene, renderer, camera, galaxy, solarSystem, universe,
     mirrorGroup, mirrorVisualAnchor, mirrorVisualHome: mirrorVisualAnchor.position.clone(),
     crossfadeRing,
-    pyramidMesh, bananaMesh, crownGroup, bulge, tonearm,
+    pyramidMesh, bananaMesh, crownGroup, bulge, tonearm, trumpetGroup, trumpetApi,
     galaxyCenter: galaxy.starsGroup.position.clone(), // ← 太陽系召喚時の中心(銀河の中心。生成時点で固定)
     coronationStarted: false, // ← バナナクリック演出の二重発火防止
     // ★ 2026-09-16 追加(バグ修正): 「バルジが出現していない」への対応。戴冠演出中、
@@ -1265,8 +1428,18 @@ export function tryRecordClick(record, raycaster, { onNavigate } = {}) {
 
 // レンダーループから、メインのrenderer.render(...)より前に毎フレーム呼ぶ想定。
 // controls: main.js側のOrbitControls(渡すと、スクロールに応じて向きを補間する)。
+// trumpetApi.update(elapsed)用の経過秒数。main.js側のclockには依存せず、
+// updateRecordDisplayが呼ばれるたびにdeltaSecondsを足し込むだけの、record.js内で
+// 閉じた積算値(内部のディレイ計算は差分ベースなので、基準点がいつでも問題ない)。
+let trumpetElapsedAccumulator = 0;
+
 export function updateRecordDisplay(record, deltaSeconds, controls) {
   if (!record) return;
+
+  if (record.trumpetApi) {
+    trumpetElapsedAccumulator += deltaSeconds;
+    record.trumpetApi.update(trumpetElapsedAccumulator);
+  }
 
   // 鏡三角錐(レコード)の自転速度: 現状は常に等倍。
   const spinMultiplierTarget = 1;
@@ -1312,21 +1485,39 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
   }
 
   // 鏡に映るシーンを毎フレーム撮影する(自分自身が映り込まないよう撮影中だけ非表示にする)。
-  // ★ バグ修正: ここは「鏡tripodが実際に画面に見えているか」で判定する必要があるが、
-  //   mirrorGroupは見た目を持たないただの位置基準グループで、その.visibleはmain.js側が
-  //   スクロール方向判定用に書き換えている無関係なフラグだった。実際の見た目を制御して
-  //   いるのはmirrorVisualAnchor.visible(tripodRingSwap.js側がswapT>=1で切り替える)なので、
-  //   撮影のスキップ判定もこちらを見るようにする。
-  if (!record.mirrorVisualAnchor.visible) return;
-  // ★ バグ修正: 撮影(=cubeCamera.update)の直前に、実際に見えているピラミッド
-  //   (mirrorVisualAnchor。tripodRingSwap.js側が毎フレーム位置を書き換えている)へ
-  //   cubeCameraの位置を追従させ直す。これを怠ると、tripod降下中〜鏡tripod表示中は
-  //   撮影位置がピラミッドの実位置から乖離したままになり、反射が実際の見た目と
-  //   食い違って見えてしまう(詳細はcreateRecordDisplay側のコメント参照)。
-  record.cubeCamera.position.copy(record.mirrorVisualAnchor.position).add(_cubeCameraOffset);
+  // ★ バグ修正(ご指摘反映): 「鏡tripodが消えた後に登場する金のリング(universe.goldenRing)
+  //   の上に、その後ずっとihがいる。ihは映っているか」への対応。
+  //   以前はここが`if (!record.mirrorVisualAnchor.visible) return;`だけだったため、
+  //   finishTripodRingSwap()がmirrorVisualAnchor.visible=falseにした瞬間(=まさに
+  //   goldenRing・ihが恒久的に現れる瞬間)から、このcubeCamera.update()自体が
+  //   二度と呼ばれなくなっていた。つまりgoldenRing.material.envMapが参照している
+  //   renderTarget.textureは、鏡が消える直前(=goldenRing・ihがまだ現れる前)の
+  //   状態で完全に凍結されており、以後どれだけihがそこに居続けても、その反射には
+  //   一切反映されないままだった(除外されていたのではなく、撮影自体が止まっていた)。
+  //   鏡・金のリングのどちらか一方でも見えている間は撮影を続けるようにし、golden
+  //   ring段階ではリング(=ihのすぐ下)側へcubeCameraを追従させる。
+  const mirrorVisible = record.mirrorVisualAnchor.visible;
+  const goldenRing = record.universe ? record.universe.goldenRing : null;
+  const goldenRingVisible = !!(goldenRing && goldenRing.visible);
+  if (!mirrorVisible && !goldenRingVisible) return;
+  // ★ バグ修正: 撮影(=cubeCamera.update)の直前に、実際に見えている方
+  //   (鏡=mirrorVisualAnchor、または金のリング=goldenRing。どちらもtripodRingSwap.js側が
+  //   毎フレーム/切り替え時に位置を書き換えている)へcubeCameraの位置を追従させ直す。
+  //   これを怠ると、撮影位置が実際の見た目の位置から乖離したままになり、反射が
+  //   実際の見た目と食い違って見えてしまう(詳細はcreateRecordDisplay側のコメント参照)。
+  if (mirrorVisible) {
+    record.cubeCamera.position.copy(record.mirrorVisualAnchor.position).add(_cubeCameraOffset);
+  } else {
+    // ★ ihはgoldenRingのすぐ上(universe.js側のIH_ABOVE_RING_MARGIN+バウンス)にいるので、
+    //   リング自身の高さそのものより少し上を撮影点にする(仮値。見ながら調整してください)。
+    record.cubeCamera.position.copy(goldenRing.position).add(_goldenRingCubeCameraOffset);
+  }
   record.mirrorGroup.visible = false;
   const wasVisualVisible = record.mirrorVisualAnchor.visible;
   record.mirrorVisualAnchor.visible = false;
+  // ★ goldenRing自身も、鏡と同じ理由(自分自身が映り込むのを防ぐ)で撮影中だけ隠す。
+  const wasGoldenRingVisible = goldenRingVisible;
+  if (goldenRing) goldenRing.visible = false;
   // ★ バグ修正: record.tonearm(MeshPhysicalMaterial({transmission:1.0})のガラス製アーム)が
   //   撮影対象のシーンに写ったままだと、three.js側がtransmissionオブジェクト描画のたびに
   //   挟む「背景を一時レンダーターゲットへ撮り直す」処理が、CubeCameraの現在の面
@@ -1338,6 +1529,7 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
   if (record.tonearm) record.tonearm.visible = wasTonearmVisible;
   record.mirrorGroup.visible = true;
   record.mirrorVisualAnchor.visible = wasVisualVisible;
+  if (goldenRing) goldenRing.visible = wasGoldenRingVisible;
 }
 
 // TODO:
