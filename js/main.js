@@ -298,7 +298,7 @@ const OVERVIEW_SCROLL_RANGE = 1200;       // 仮値。この累積スクロー�
 //   それぞれ直接の角度指定に戻し、基準を大きく狭め、最大ズームもより強くした。
 //   (前々回、fov=2という極端な値を「バグの原因では」と疑ったが、実際の原因は
 //   ドラッグ判定側にあったと判明したため、狭いfov自体は問題ない)
-const OVERVIEW_FOV_BASE = 35;             // 銀河俯瞰時の既定(ドラッグしていない)fov。
+const OVERVIEW_FOV_BASE = 70;             // 銀河俯瞰時の既定(ドラッグしていない)fov。
 // ★ 追加(ご指摘反映): 「視点が遠い(=ドラッグしていない基準fov)と明るすぎる」への対応。
 //   左右ドラッグでfovを望遠側へズームする操作に、カメラの絞り(露出)の変化を連動させる。
 //   ドラッグしていない基準状態(=fov広角・視点が遠い)ほど絞って暗く、目一杯ドラッグして
@@ -349,63 +349,15 @@ const TILT_SHIFT_FLIGHT_EASE = (t) => t * t * (3 - 2 * t); // 立ち上がりの
 const TILT_SHIFT_INTRO_DURATION = 0.6; // 俯瞰モードに入った瞬間だけのフェードイン秒数(固定。カメラ速度の影響を受けない)
 let tiltShiftIntroStart = null;        // 俯瞰モードに入った時刻(clock.getElapsedTime())。null=未計測
 
-// ── 最後の俯瞰モードでのcarousel縮小・移動(スケール感の強調) ────────────
-// ご指示: 「最後のスクロールモードの時は、carousel一式を半分のサイズにする。位置は数式の位置を
-//   銀河の中心へ」。俯瞰に入った時点の数式(universe.sprites[universe.equationIndex])のワールド位置Eを
-//   基準点にして、carousel一式(tripod・リング・粒子の軌跡・ih)を E を中心に縮小し、E が銀河の
-//   中心(record.galaxyCenter)へ来るように平行移動する。
-//     新しい位置 = 銀河中心 + s × (元の位置 − E)   /   新しい大きさ = 元の大きさ × s
-// 進行度は基準姿勢へのフライト(overviewFlightT)に連動させ、カメラが動くのと同時に縮みながら
-// 銀河の中心へ移る。各オブジェクトの「元の位置・大きさ」は俯瞰に入った瞬間に一度だけ記録し、
-// 以後は毎フレーム、その元の値から計算し直して上書きする(累積誤差が出ない)。
-// ★ 修正(ご指摘反映): 「カメラが引く(=仰角が上がる)ときに、その速さに合わせてゆっくり縮む」
-//   体験にするため、突入フライト(overviewFlightT。固定24秒で1回だけ進む)ではなく、
-//   スクロールによる仰角の進行度(overviewScrollCurrent/OVERVIEW_SCROLL_RANGE)に連動させる。
-//   これで「フライトが終わった後は縮小も止まる」ことがなくなり、ユーザーがスクロールし続ける
-//   限り(=カメラが引き続ける限り)縮小も追従してゆっくり進む。
-//
-// ★ バグ修正(ihの回転が止まる件): 以前はtripodAnchor等のposition/scaleを、突入時に一度だけ
-//   記録した「frozenなworldPos」から毎フレーム直接上書きしていた。この上書きは対象オブジェクトの
-//   現在位置を一切参照せず、常に同じ記録値から計算し直すため、ihSprite自身がuniverse.js側で
-//   受け続けている回転/公転アニメーション(そのフレームでのuniverse.js側の更新結果)を、
-//   このあとの強制上書きが毎回なかったことにしてしまい、突入時点の姿勢に固定されて見えていた。
-//   対応: 各オブジェクトのposition/rotationには一切触れず、専用のGroupへattach()で
-//   付け替える(attachはワールド位置を保ったまま親を差し替えるので見た目は変わらない)。
-//   以後はこのGroupのposition/scaleだけを動かして「pivotを中心に縮め、galaxyCenterへ寄せる」
-//   効果を出す。各オブジェクトの自転・公転はGroupのローカル空間の中でそのまま今まで通り
-//   動き続けるので、干渉しない。
-const CAROUSEL_OVERVIEW_SCALE = 0.5;
-let carouselRig = null;
+// ★ 2026-09-19 削除(ご指示反映): 「最後の俯瞰モードでcarousel一式を縮小・銀河中心へ
+//   移動する」演出(captureCarouselRig/updateCarouselScale)は、ihの回転停止・挙動異常
+//   バグの温床になり続けたため丸ごと廃止した。代わりに銀河そのものを拡大する方針に変更
+//   (galaxy.js側のgrowGalaxyScale/record.jsのplayCoronationSequence呼び出し箇所を参照)。
+//   これによりcarousel側のオブジェクトは一切いじらなくなり、universe.js側の自転・公転の
+//   実装がどうであっても干渉しない(=このクラスの不具合が構造的に起きなくなる)。
 
-function captureCarouselRig() {
-  const eq = universe.sprites && universe.sprites[universe.equationIndex];
-  const pivot = new THREE.Vector3();
-  (eq || universe.tripodAnchor).getWorldPosition(pivot);
-  const targets = [universe.tripodAnchor, universe.goldenRing, universe.roofParticles, universe.ihSprite].filter(Boolean);
-  // 親(祖先)もtargetsに含まれているものは除外する(親を縮めれば子も一緒に縮むので、二重に縮めない)。
-  const topLevel = targets.filter((o) => {
-    for (let a = o.parent; a; a = a.parent) if (targets.includes(a)) return false;
-    return true;
-  });
 
-  const group = new THREE.Group();
-  group.position.copy(pivot); // 付け替えた瞬間、各objのlocal位置が「pivot基準の相対位置」になる
-  scene.add(group);
-  topLevel.forEach((obj) => group.attach(obj)); // ワールド位置を保ったまま親をgroupへ付け替え
 
-  return { group, pivot };
-}
-
-function updateCarouselScale() {
-  if (!overviewActive || !carouselRig) return;
-  const elevationT = THREE.MathUtils.clamp(overviewScrollCurrent / OVERVIEW_SCROLL_RANGE, 0, 1);
-  const s = THREE.MathUtils.lerp(1, CAROUSEL_OVERVIEW_SCALE, TILT_SHIFT_FLIGHT_EASE(elevationT));
-  // worldPos(obj) = galaxyCenter + s * (localPos(obj)) と同じ効果になるよう、
-  // group.position・group.scaleだけを動かす(localPos自体は各objの現在の自転/公転が
-  // 決めるので、ここでは一切上書きしない)。
-  carouselRig.group.position.copy(record.galaxyCenter);
-  carouselRig.group.scale.setScalar(s);
-}
 
 
 const _tsBoxA = new THREE.Box3();
@@ -577,8 +529,7 @@ function calmGalaxyArms() {
 function enterGalaxyOverview() {
   if (overviewActive) return;
   overviewActive = true;
-  carouselRig = captureCarouselRig();
-  tiltShiftIntroStart = clock.getElapsedTime(); // ★ 追加: ここからTILT_SHIFT_INTRO_DURATION秒だけフェードイン // ★ 追加: 縮小・移動前の元の位置/大きさ(と数式の位置)をここで記録
+  tiltShiftIntroStart = clock.getElapsedTime(); // ★ 追加: ここからTILT_SHIFT_INTRO_DURATION秒だけフェードイン
   if (controls) controls.enabled = false; // telescopeモード中は専用のスクロール/ドラッグでのみ制御する
 
   // ★ 2026-09-17 追加(ご指示反映): 「最後の俯瞰視点になったときに変化」の反映。
@@ -1679,7 +1630,6 @@ function animate() {
       dumpCamera('periodic');
     }
   }
-  updateCarouselScale(); // ★ 追加: 俯瞰中、carousel一式を半分に縮めて数式位置を銀河中心へ(ティルトシフトの帯計算より先に)
   updateTiltShiftEffect(); // ★ 追加: 最後の俯瞰でカメラが低い間だけ、carouselにピントが合うティルトシフトをかける
   yzPanel.update(clock.getElapsedTime());
   bananaState.mesh.rotation.y += state === 'idle' ? 0.004 : 0;
