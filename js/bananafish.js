@@ -58,13 +58,13 @@ export function createBananafish(opts = {}) {
 
   const scene = new THREE.Scene();
   scene.background = null;
-  scene.fog = new THREE.Fog(0xffffff, 9, 26);
+  scene.fog = new THREE.Fog(0xffffff, 9, 30); // far distance nudged out a bit to match the widened zoom-out range
 
   const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 
   // ---------- manual camera orbit ----------
   const camTarget = new THREE.Vector3(0, 0.7, ROOM_CENTER_Z);
-  const INITIAL_RADIUS = 6.6, INITIAL_AZIMUTH = Math.PI, INITIAL_POLAR = 1.24;
+  const INITIAL_RADIUS = 9.6, INITIAL_AZIMUTH = Math.PI, INITIAL_POLAR = 1.34; // a bit further back than before, so the default door-side view isn't right up against the wall
   let radius = INITIAL_RADIUS, azimuth = INITIAL_AZIMUTH, polar = INITIAL_POLAR;
   const POLAR_MIN = 0.85, POLAR_MAX = 1.85;
   const ROOM_SAFE_MARGIN = 0.5; // keep the viewer standing just outside whichever wall they're nearest to
@@ -823,70 +823,72 @@ export function createBananafish(opts = {}) {
     doorQuoteMat.opacity = Math.max(0, Math.min(1, op));
   }
 
-  // ---------- the gun: a flat 2D muzzle marker, held by the viewer outside the room, labeled with its caliber ----------
-  function makeGunCanvas(){
-    const w = 320, h = 320;
+  // ---------- shared 3D muzzle: a short black ring (a squat cylinder punched through with a bore
+  // hole, edges lightly beveled), low roughness / high metalness for a machined-metal look. Used for
+  // both the window-side (held-by-the-viewer) and door-side (seen-through-the-glass) markers below. ----------
+  function makeMuzzleRingGeometry({ outerRadius = 0.22, innerRadius = 0.1, depth = 0.09, bevelSize = 0.02 } = {}){
+    const shape = new THREE.Shape();
+    shape.absarc(0, 0, outerRadius, 0, Math.PI * 2, false);
+    const hole = new THREE.Path();
+    hole.absarc(0, 0, innerRadius, 0, Math.PI * 2, true);
+    shape.holes.push(hole);
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth,
+      bevelEnabled: true,
+      bevelThickness: bevelSize,
+      bevelSize: bevelSize,
+      bevelSegments: 3,
+      curveSegments: 48,
+    });
+    geo.center(); // center the short cylinder on its own local origin, so group.position is its true center
+    return geo;
+  }
+  const muzzleRingMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0e, roughness: 0.28, metalness: 0.85, side: THREE.DoubleSide, fog: false });
+  function makeMuzzle3D(opts = {}){
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(makeMuzzleRingGeometry(opts), muzzleRingMat)); // true geometric hole, no backing disc, so it reads as an actual opening (you see straight through it) rather than a plugged black circle
+    return group;
+  }
+  function makeCaliberLabelCanvas(color){
+    const w = 320, h = 160;
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');
-    const cx = w/2, cy = h*0.6, rOuter = 62, rInner = 34;
-    ctx.fillStyle = '#3a3d42';
-    ctx.beginPath(); ctx.arc(cx, cy, rOuter, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#111214';
-    ctx.beginPath(); ctx.arc(cx, cy, rInner, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#9aa0a8';
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(cx, cy, rOuter, 0, Math.PI*2); ctx.stroke();
-    ctx.fillStyle = '#d8ad2f';
+    ctx.fillStyle = color;
     ctx.font = 'italic 700 82px Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('7.65', cx, cy - rOuter - 48);
+    ctx.fillText('7.65', w / 2, h / 2);
     return cv;
   }
-  const gunTex = new THREE.CanvasTexture(makeGunCanvas());
-  gunTex.colorSpace = THREE.SRGBColorSpace;
-  const gunMat2D = new THREE.MeshBasicMaterial({ map:gunTex, transparent:true, depthWrite:false });
-  const gunPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), gunMat2D);
-  gunPlane.position.set(0.55, 0.5, 4.6);
-  scene.add(gunPlane);
+
+  // ---------- the gun: a single 3D black-ring muzzle, directly below its "7.65" caliber label.
+  // Only ever seen from the door side, looking out through the window at it - both the ring and the
+  // label are hidden together the moment the camera is on the window side (see updateMuzzleVisibility).
+  const MUZZLE_X = DOOR_CENTER_X, MUZZLE_Y = PANEL_CENTER_Y, MUZZLE_Z = 4.6;
+  const muzzleGroup = makeMuzzle3D();
+  muzzleGroup.position.set(MUZZLE_X, MUZZLE_Y, MUZZLE_Z);
+  scene.add(muzzleGroup);
+
+  const muzzleLabelTex = new THREE.CanvasTexture(makeCaliberLabelCanvas('#000000'));
+  muzzleLabelTex.colorSpace = THREE.SRGBColorSpace;
+  const muzzleLabelMat = new THREE.MeshBasicMaterial({ map: muzzleLabelTex, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  const muzzleLabel = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.55), muzzleLabelMat);
+  muzzleLabel.position.set(MUZZLE_X, MUZZLE_Y + 0.5, MUZZLE_Z); // directly above the ring, same x/z
+  muzzleLabel.rotation.y = Math.PI; // flip so the text reads correctly (not mirrored) from the door side, which looks toward +Z
+  scene.add(muzzleLabel);
 
   function getMuzzleWorldPos(){
-    return gunPlane.position.clone();
+    return muzzleGroup.position.clone();
   }
 
-  // ---------- door-side muzzle marker: a gray muzzle, seen from the door looking out through the window ----------
-  // Sits beyond the window (a larger z than any camera position reachable on the window side - see the
-  // camera's radius/polar clamp above, whose max window-side z is well under this), so it never shows up
-  // when looking in from the window, but reads clearly from the door side, through both panes of glass
-  // (the door glass and, beyond it, the window glass) in front of it.
-  function makeDoorMuzzleCanvas(){
-    const w = 320, h = 320;
-    const cv = document.createElement('canvas');
-    cv.width = w; cv.height = h;
-    const ctx = cv.getContext('2d');
-    const cx = w/2, cy = h*0.6, rOuter = 62, rInner = 34;
-    ctx.fillStyle = '#3a3d42';
-    ctx.beginPath(); ctx.arc(cx, cy, rOuter, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#000000';
-    ctx.beginPath(); ctx.arc(cx, cy, rInner, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#c9ccd0';
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(cx, cy, rOuter, 0, Math.PI*2); ctx.stroke();
-    ctx.fillStyle = '#000000';
-    ctx.font = 'italic 700 82px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('7.65', cx, cy - rOuter - 48);
-    return cv;
+  // hide the ring + label together the instant the camera is on the window side; show them together
+  // otherwise (same onWindowSide check as tryClickPanelWord/tryFireAtPointer below)
+  function updateMuzzleVisibility(){
+    const onWindowSide = camera.position.z > ROOM_CENTER_Z;
+    muzzleGroup.visible = !onWindowSide;
+    muzzleLabel.visible = !onWindowSide;
   }
-  const doorMuzzleTex = new THREE.CanvasTexture(makeDoorMuzzleCanvas());
-  doorMuzzleTex.colorSpace = THREE.SRGBColorSpace;
-  const doorMuzzleMat2D = new THREE.MeshBasicMaterial({ map:doorMuzzleTex, transparent:true, depthWrite:false, side:THREE.DoubleSide });
-  const doorMuzzlePlane = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), doorMuzzleMat2D);
-  doorMuzzlePlane.position.set(DOOR_CENTER_X, PANEL_CENTER_Y, 4.6);
-  doorMuzzlePlane.rotation.y = Math.PI; // only ever seen from the door side (behind); turn it to face that way so the text isn't mirrored
-  scene.add(doorMuzzlePlane);
 
   // ---------- gold particles ----------
   const goldMat = new THREE.MeshStandardMaterial({ color:0xd8ad2f, roughness:0.25, metalness:0.85, emissive:0x3a2a05, emissiveIntensity:0.4 });
@@ -902,7 +904,7 @@ export function createBananafish(opts = {}) {
     const mesh = new THREE.Mesh(particleGeo, goldMat);
     mesh.position.copy(from);
     scene.add(mesh);
-    activeShots.push({ mesh, from: from.clone(), to, t0: performance.now(), duration: 500 });
+    activeShots.push({ mesh, from: from.clone(), to, t0: performance.now(), duration: 160 }); // fast, bullet-speed travel time (was 500ms)
   }
 
   function updateShots(now){
@@ -911,8 +913,7 @@ export function createBananafish(opts = {}) {
       const elapsed = now - shot.t0;
       const u = Math.min(1, elapsed / shot.duration);
       const ease = 1 - Math.pow(1-u, 3);
-      const pos = new THREE.Vector3().lerpVectors(shot.from, shot.to, ease);
-      pos.y += Math.sin(u * Math.PI) * 0.3;
+      const pos = new THREE.Vector3().lerpVectors(shot.from, shot.to, ease); // straight line from -> to, no arc added
       shot.mesh.position.copy(pos);
       const scale = 1 - 0.5*u;
       shot.mesh.scale.setScalar(Math.max(0.2, scale));
@@ -1039,7 +1040,7 @@ export function createBananafish(opts = {}) {
   });
 
   canvas.addEventListener('wheel', (e)=>{
-    radius = Math.min(9, Math.max(4, radius + e.deltaY * 0.003));
+    radius = Math.min(12, Math.max(4, radius + e.deltaY * 0.003)); // widened max so both sides can be viewed from further back
     updateCamera();
   }, {passive:true});
 
@@ -1057,6 +1058,7 @@ export function createBananafish(opts = {}) {
     const t = clock.getElapsedTime();
     updateWaveLines(t, now);
     updateFireSandEffect(now);
+    updateMuzzleVisibility();
     updateShots(now);
     updateReveal(now);
     updateQuoteReveal(now);
@@ -1069,6 +1071,7 @@ export function createBananafish(opts = {}) {
   function reset(){
     radius = INITIAL_RADIUS; azimuth = INITIAL_AZIMUTH; polar = INITIAL_POLAR;
     updateCamera();
+    updateMuzzleVisibility();
 
     activeShots.forEach(shot => scene.remove(shot.mesh));
     activeShots.length = 0;
