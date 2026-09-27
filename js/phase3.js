@@ -344,7 +344,8 @@ const STAGE_TRANSITION = {
     denomFade: 4.0,  // ⑵ 2πがフェードインする ※元の速度の1/4
   },
   toStage3: { moveDuration: 1.2, spinDuration: 4.8 }, // ⑴bar伸長+2π→分母中心+h→分子中心 → ⑵分母が回転してCarouselへ(順番に発生。回転は1/4速度に減速)
-  toStage4: { hMove: 0.7, gapBeforeHop: 2, hop: 0.8, merge: 0.6 },  // ⑴hが先に歩いて着地 → (2秒静止) → ⑵iがジャンプして乗る → ⑶最終微調整
+  // 2026-09-26: iが飛び乗る前の静止(gapBeforeHop)が長いとのご指摘により2秒→1秒に半減。
+  toStage4: { hMove: 0.7, gapBeforeHop: 1, hop: 0.8, merge: 0.6 },  // ⑴hが先に歩いて着地 → (1秒静止) → ⑵iがジャンプして乗る → ⑶最終微調整
 };
 
 // ── ①→②(2段階) ──────────────────────────────
@@ -674,11 +675,11 @@ function transitionToStage4({ assembly, frame, onComplete }) {
   tl.to(barSprite.position, { x: barTarget.x, y: barTarget.y, z: barTarget.z, duration: merge, ease: 'power2.out' }, landTime);
 }
 
-// ステージ間の「静止時間」(秒)。ご要望により、2π出現後に2秒設ける。
-// (h→iの間の2秒は、より正確には「hが動いた後・iが動く前」の間なので、
-//  ここではなくtransitionToStage4内のgapBeforeHopで扱う)
+// ステージ間の「静止時間」(秒)。ご要望により、2π出現後に2秒設けていたが、
+// 2026-09-26: 動きの尺(toStage2)はそのままに、この「出現し終えた後の純粋な待機」だけを
+// 半分の1秒に短縮。
 const STAGE_TRANSITION_HOLD = {
-  afterStage2: 2, // 2πが出現した直後の静止
+  afterStage2: 1, // 2πが出現した直後の静止
 };
 
 function holdThen(seconds, fn) {
