@@ -69,7 +69,7 @@ function makeHitAreaMesh(radius) {
 // もうtripodの直径と一致させる制約は外れたので、SOLAR_SYSTEM_SCALEの対象外という位置づけだけ
 // (太陽本体・惑星本体・惑星軌道半径には掛からない)は変わらず維持している。
 // ★ 2026-09-19 修正(ご指摘反映):「太陽の銀河の公転半径を1.5倍ほど大きくして」への対応。
-export const ORBIT_RADIUS_BASE = TRIPOD_RADIUS * 2.4 * 1.5;      // createSolarSystem時点の初期主軌道半径(仮値。以前の1.5倍)
+export const ORBIT_RADIUS_BASE = TRIPOD_RADIUS * 2.4 * 3;      // createSolarSystem時点の初期主軌道半径(仮値。以前の1.5倍)
 // ↑ recordAssembly.js側の針が銀河に触れた瞬間、setOrbitRadius()でこれよりもっと大きい値
 //   (針が触れた位置=銀河上の接触点の半径)に即座に置き換えられる。あくまで生成直後の初期値。
 // ── 「規定軌道」: バナナクリック後、軌道が最終的に縮み切る先の固定半径 ───────────
