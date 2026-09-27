@@ -310,7 +310,7 @@ export function createBilliardTable(opts = {}) {
   const beamTex = buildBeamTexture();
 
   const pocketMeshes = [];
-  function buildPocket(c, isTarget){
+  function buildPocket(c){
     const group = new THREE.Group();
     group.position.set(c.x, 0, c.y);
     scene.add(group);
@@ -377,7 +377,7 @@ export function createBilliardTable(opts = {}) {
     hitArea.position.y = 0.05;
     group.add(hitArea);
 
-    return { group, glow, core, beam, light, hitArea, isTarget, pos:c };
+    return { group, glow, core, beam, light, hitArea, pos:c };
   }
 
   // 各ポケットに対応する作品名(仮テキスト。あとで差し替え可)
@@ -390,7 +390,7 @@ export function createBilliardTable(opts = {}) {
     '?',
   ];
   pockets.forEach((c, idx) => {
-    const p = buildPocket(c, idx === 0);
+    const p = buildPocket(c);
     p.workTitle = POCKET_WORKS[idx] ?? '';
     pocketMeshes.push(p);
   });
@@ -440,13 +440,16 @@ export function createBilliardTable(opts = {}) {
   // 1〜9番ボール用の残り5セット
   const BALL_QUOTES = [
     ['The Ocean Full of Bowling Balls'],
-    ['opened a heavy metal door that read:\nTO THE POOL.\n—Teddy',
-     'A man walks along the beach and unfortunately gets hit in the head by a cocoanut.\n—Teddy'],
+    ['opened a heavy metal door that read:\nTO THE POOL.\n—Teddy'],
     ['But if you get on the other side, where there aren’t any hot-shots, then what’s a game about it?\n—Holden',
      'Life is a game'],
+     ['I went down near the lagoon and I sort of skipped the quarters and the nickel across it,'],
     ['He would be all smiles when he heard a responsive click of glass striking glass\n—Buddy',
      'It never appeared to be clear to him whose winning click it was.\n—Buddy'],
     ['One of us will be present at the other chap’s departure for various reasons.\n—Seymour'],
+    ['I guess I thought it’d take my mind off getting pneumonia and dying.'],
+    ['A man walks along the beach and unfortunately gets hit in the head by a cocoanut.\n—Teddy'],
+    ['I guess I thought it’d take my mind off getting pneumonia and dying. It didn’t, though.']
   ];
   // 1〜9番ボールに、上の5セットを順番に(足りない分は繰り返して)割り当てる
   function quotesForBallNumber(num){
@@ -499,7 +502,9 @@ export function createBilliardTable(opts = {}) {
       mesh,
       pos: new THREE.Vector2(0,0),
       vel: new THREE.Vector2(0,0),
-      spin: new THREE.Vector3((Math.random()-0.5),(Math.random()-0.5),(Math.random()-0.5)),
+      // 回転が見た目に意味を持つのは模様入りの9番だけ(他は単色球なので
+      // 回転してもカメラからは判別できない)。9番以外は spin を持たない
+      spin: num === 9 ? new THREE.Vector3((Math.random()-0.5),(Math.random()-0.5),(Math.random()-0.5)) : null,
       sunk:false, sinking:false, sinkT:0, num, isCue
     };
     balls.push(b);
@@ -588,9 +593,17 @@ export function createBilliardTable(opts = {}) {
   }
 
   function startBreak(){
+    // 沈んだボールは resolvePocket() で捕まった瞬間の速度を凍結したまま
+    // 保持している(stepPhysics / 摩擦処理が sunk/sinking を丸ごとスキップ
+    // するため)。ここで全ボールの速度をゼロに戻してからでないと、前回の
+    // ブレイクで落ちたボールがキュー接触前から動き出してしまう
+    // (初回だけ正常に見えたのはこの残留速度がまだ存在しないため)。
+    balls.forEach(b=>{ b.vel.set(0,0); });
+
     // reset positions
     rackOrder.forEach((num,i)=>{ balls[i].pos.copy(rackPositions[i]); });
-    setupBreakShot(17.5); // a real break-shot speed
+    setupBreakShot(17.5); // a real break-shot speed(↑の一括ゼロ化の後で呼ぶことで、
+                           // キューの初速だけはここで正しく設定される)
     resetBallVisualPositions();
 
     waterUniforms.uRippleStart.value = -999; // fires on first contact, not now
@@ -713,12 +726,11 @@ export function createBilliardTable(opts = {}) {
     balls.forEach(b=>{
       if(b.sunk) return;
       if(!b.sinking) b.mesh.position.set(b.pos.x, BALL_R, b.pos.y);
-      if(!b.isCue){
+      // 9番だけ帯模様があり回転が見た目に反映されるので、9番だけ回転させる。
+      // キューボールと他の単色ボールは回転させても見分けがつかないので廃止。
+      if(b.num === 9){
         b.mesh.rotation.x += b.spin.x*dt*b.vel.length()*1.4;
         b.mesh.rotation.z += b.spin.z*dt*b.vel.length()*1.4;
-      } else {
-        b.mesh.rotation.x += b.vel.y*dt*1.6;
-        b.mesh.rotation.z -= b.vel.x*dt*1.6;
       }
     });
   }
