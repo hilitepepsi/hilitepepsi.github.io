@@ -1,29 +1,1106 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<title>Just a banana</title>
-<link rel="icon" type="image/svg+xml" href="./img/icon.svg">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Banana.com</title>
+<meta name="description" content="An interactive space built around J.D. Salinger. Nobody knows which ocean the banana prefers.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400;1,500;1,600&family=Playfair+Display:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./css/style.css">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000000;
+    overflow: hidden;
+  }
+  canvas { display: block; }
+
+  /* 常時表示される、元々のままの全画面シーン */
+  #bg {
+    position: fixed;
+    inset: 0;
+  }
+
+  /* めくった時にだけ見える黒い層(本の輪郭サイズだけ、JSで位置決め) */
+  /* 扉の裏: PC=/universe を iframe で実際に表示 / スマホ=/meteor の最初の画面を再現 */
+  #nextFrame { position: absolute; border: 0; background: #000; pointer-events: none; }
+  #phonePoster {
+    position: absolute; inset: 0; background: #f4f1ea; display: none;
+    --burst-size: clamp(56px, 20vw, 100px);
+    --burst-lift: calc(7vh + var(--burst-size) * 0.325 - 1.2vh);
+  }
+  #phonePoster .scene { position: absolute; inset: 2.4vh 2vw; }
+  #phonePoster .burst {
+    position: absolute; left: 50%; top: 46%; translate: -50% 0;
+    transform: translateY(calc(-100% - var(--burst-lift)));
+    transition: opacity .35s ease;
+  }
+  #phonePoster svg { width: var(--burst-size); height: auto; display: block; }
+  #phonePoster path { fill: #14120f; }
+  #phonePoster.fade .burst { opacity: 0; }
+  #revealLayer {
+    position: fixed;
+    z-index: -1; /* めくっていない間は背景canvas(#bg)の後ろ。frame()で切り替える */
+    background: #000000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* めくれる部分(本の輪郭サイズ)。中身はThree.jsでWebGL描画する。 */
+  #stage {
+    position: fixed;
+    overflow: visible; /* カーブが枠から見切れるのを許容 */
+  }
+  #stage canvas {
+    display: block;
+    /* 背景(2D canvas)との合成レイヤーが別なため、回転時にアンチエイリアスの
+       違いで境界線が見えることがある。ごくわずかに拡大して背景に重ねることで隠す。 */
+    transform: scale(1.008); /* 仮値 */
+    transform-origin: center center;
+  }
+
+  /* 昼/夜 切り替え: 画面中央を軸に時計回転。nightTから毎フレーム直接角度を設定するので
+     CSS側のtransitionは持たせない(テキストの逆回転をフレームごとに正確に合わせるため)。 */
+  #sceneRotator {
+    position: fixed;
+    inset: 0;
+    transform-origin: 50% 50%;
+    will-change: transform;
+  }
+
+  /* 右上の月ボタン */
+  #moonBtn {
+    position: fixed;
+    bottom: 22px;
+    left: 22px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.32);
+    backdrop-filter: blur(3px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 100;
+    padding: 0;
+  }
+  #moonBtn svg {
+    width: 22px;
+    height: 22px;
+    display: none;
+  }
+  #moonBtn .icon-moon { display: block; }
+  #moonBtn.is-night .icon-moon { display: none; }
+  #moonBtn.is-night .icon-sun { display: block; }
+</style>
 </head>
 <body>
+<div id="sceneRotator">
+  <canvas id="bg"></canvas>
+  <div id="revealLayer">
+    <iframe id="nextFrame" title="" tabindex="-1" aria-hidden="true"></iframe>
+    <div id="phonePoster"><div class="scene"><div class="burst"><svg viewBox="0 0 100 100" aria-hidden="true"><path d="M50 4 C50.18 5.08 50.18 6.21 50.25 7.3 C50.35 9.11 50.51 10.91 50.62 12.72 C50.99 18.96 51.51 25.25 52.42 31.43 C53.22 36.91 54.89 42.58 60.18 45.39 C61.28 45.97 62.44 46.58 63.67 46.86 C70.92 48.48 78.36 48.94 85.77 49.52 C87.84 49.69 90.24 49.63 92.21 50 C90.24 50.37 87.84 50.31 85.77 50.48 C78.36 51.06 70.92 51.52 63.67 53.14 C62.44 53.42 61.28 54.03 60.18 54.61 C54.89 57.42 53.22 63.09 52.42 68.57 C51.51 74.75 50.99 81.04 50.62 87.28 C50.51 89.09 50.35 90.89 50.25 92.7 C50.18 93.79 50.18 94.92 50 96 C49.82 94.92 49.82 93.79 49.75 92.7 C49.65 90.89 49.49 89.09 49.38 87.28 C49.01 81.04 48.49 74.75 47.58 68.57 C46.78 63.09 45.11 57.42 39.82 54.61 C38.72 54.03 37.56 53.42 36.33 53.14 C29.08 51.52 21.64 51.06 14.23 50.48 C12.16 50.31 9.76 50.37 7.79 50 C9.76 49.63 12.16 49.69 14.23 49.52 C21.64 48.94 29.08 48.48 36.33 46.86 C37.56 46.58 38.72 45.97 39.82 45.39 C45.11 42.58 46.78 36.91 47.58 31.43 C48.49 25.25 49.01 18.96 49.38 12.72 C49.49 10.91 49.65 9.11 49.75 7.3 C49.82 6.21 49.82 5.08 50 4Z"/></svg></div></div></div>
+  </div>
+  <div id="stage"></div>
+</div>
 
-<div id="hint">Metaphony</div>
-<div id="dialogue"></div>
-<div id="axisHint">What is the sound of the universe?</div>
+<button id="moonBtn" aria-label="toggle dark mode">
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="#f5efe0"><path d="M20.354 15.354A9 9 0 0 1 8.646 3.646 9.003 9.003 0 1 0 20.354 15.354Z"/></svg>
+  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="#f5efe0" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 12H1.8M22.2 12h-2.4M6.1 6.1l1.7 1.7M16.2 16.2l1.7 1.7M17.9 6.1l-1.7 1.7M7.8 16.2l-1.7 1.7"/></svg>
+</button>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+<script>
+const bgCanvas = document.getElementById('bg');
+const bgCtx = bgCanvas.getContext('2d');
+const revealLayer = document.getElementById('revealLayer');
+const stageEl = document.getElementById('stage');
+const sceneRotator = document.getElementById('sceneRotator');
+const moonBtn = document.getElementById('moonBtn');
+const nextFrame = document.getElementById('nextFrame');
+const phonePoster = document.getElementById('phonePoster');
+
+// 扉の中身をまず丸ごと描く「元絵」。表示はせず、Three.jsのテクスチャとして使う。
+const offCanvas = document.createElement('canvas');
+const offCtx = offCanvas.getContext('2d');
+
+let windowW = 0, windowH = 0;
+let worldMidY = 0;                 // 波の基準線(絶対座標、常にwindow中央)
+let bookRect = { left: 0, top: 0, width: 0, height: 0 }; // めくれる部分の絶対位置とサイズ
+
+// ---------------------------------------------
+// Three.js: 扉を実際に「紙のように」曲げる。
+// 弧長(紙の実際の長さ)を保ったまま曲率を積み上げていく方式なので、
+// 単純な回転の組み合わせより自然にたわむ。正射影カメラなので、
+// 奥に曲がっても見た目のサイズが縮まない。
+// ---------------------------------------------
+const CURL_SEGMENTS = 64; // 仮値: 横方向の分割数(多いほど滑らか)
+const CURL_MAX_RADIANS = Math.PI * 1.6; // 仮値: 自由端が最大でどこまで巻き込むか(増やした)
+
+let renderer, scene, camera, geometry, frontMesh, backMesh, canvasTexture;
+let curlProgress = 0; // 0(閉じている) 〜 1(全開)
+let dpr = Math.min(window.devicePixelRatio || 1, 2); // 高解像度画面用の倍率(負荷を抑えるため上限2)
+let orbitS = null; // 連打演出の状態(nullなら通常)
+let layersVisible = true; // revealLayer / stage の表示状態(frame()で切り替える)
+
+function initThree() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  stageEl.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+
+  canvasTexture = new THREE.CanvasTexture(offCanvas);
+  canvasTexture.encoding = THREE.sRGBEncoding;
+
+  // ライティングの影響を受けない素材にする。平らな状態のとき、扉(Three.js)と
+  // 背景(2D canvasそのまま)の色・明るさが完全に一致し、境界が出ないようにするため。
+  const frontMat = new THREE.MeshBasicMaterial({ map: canvasTexture, side: THREE.FrontSide });
+  const backMat = new THREE.MeshBasicMaterial({ color: 0xf2b400, side: THREE.BackSide });
+
+  frontMesh = new THREE.Mesh(undefined, frontMat);
+  backMesh = new THREE.Mesh(undefined, backMat);
+  scene.add(frontMesh);
+  scene.add(backMesh);
+}
+
+function buildCurlGeometry() {
+  const W = bookRect.width, H = bookRect.height;
+  geometry = new THREE.PlaneGeometry(W, H, CURL_SEGMENTS, 1);
+  geometry.translate(W / 2, 0, 0); // 左端(蝶番)をx=0にする
+  frontMesh.geometry && frontMesh.geometry.dispose();
+  backMesh.geometry && backMesh.geometry.dispose();
+  frontMesh.geometry = geometry;
+  backMesh.geometry = geometry;
+
+  camera = new THREE.OrthographicCamera(0, W, H / 2, -H / 2, -2000, 2000);
+  camera.position.set(0, 0, 1000);
+  camera.lookAt(0, 0, 0);
+
+  renderer.setSize(W, H, false);
+  renderer.domElement.style.width = W + 'px';
+  renderer.domElement.style.height = H + 'px';
+}
+
+// 弧長(紙の実際の長さ)を保ったまま、角度プロファイルに沿って曲げた輪郭を1列分だけ計算する。
+// 蝶番からの距離(弧長)ごとに接線方向 theta を決め、それを積分して(x,z)を求める
+// ―― 実際の紙が曲がるのと同じ考え方。
+function computeCurlColumn(W) {
+  const n = CURL_SEGMENTS;
+  const ds = W / n;
+  const xs = new Float32Array(n + 1);
+  const zs = new Float32Array(n + 1);
+  xs[0] = 0; zs[0] = 0;
+  let theta = 0;
+  for (let i = 0; i < n; i++) {
+    const u = i / n; // 0(蝶番側)〜1(自由端側)
+    // 蝶番側は曲がりにくく、自由端に近づくほど曲率が強くなるようにする
+    const curvature = curlProgress * Math.pow(u, 0.4) * (CURL_MAX_RADIANS / n) * 2.6; // 仮値: 軸近くまで曲がるよう指数を下げた
+    theta += curvature;
+    xs[i + 1] = xs[i] + ds * Math.cos(theta);
+    zs[i + 1] = zs[i] + ds * Math.sin(theta);
+  }
+  return { xs, zs };
+}
+
+function updateCurl() {
+  if (!geometry) return;
+  const W = bookRect.width;
+  const { xs, zs } = computeCurlColumn(W);
+  const pos = geometry.attributes.position;
+  const segCountX = CURL_SEGMENTS + 1;
+  for (let iy = 0; iy < 2; iy++) {
+    for (let ix = 0; ix < segCountX; ix++) {
+      const idx = iy * segCountX + ix;
+      pos.setX(idx, xs[ix]);
+      pos.setZ(idx, zs[ix]);
+    }
+  }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+}
+
+function renderThree() {
+  canvasTexture.needsUpdate = true;
+  updateCurl();
+  renderer.render(scene, camera);
+}
+
+
+// ---------------------------------------------
+// 0. バナナ画像 (アップロードされた banana.svg のpathを流用し、色違いのビットマップを作る)
+// ---------------------------------------------
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function lerpColor(hexA, hexB, t) {
+  const a = hexToRgb(hexA), b = hexToRgb(hexB);
+  const r = Math.round(lerp(a[0], b[0], t));
+  const g = Math.round(lerp(a[1], b[1], t));
+  const bl = Math.round(lerp(a[2], b[2], t));
+  return `rgb(${r},${g},${bl})`;
+}
+
+// ---------------------------------------------
+// 1. バナナの「長軸」の角度を輪郭点から推定(PCA)。
+//    これを使えば、どんな向きの元画像でも「横方向に最も長い」向きに正確に回転できる。
+// ---------------------------------------------
+const bananaPathD = "978,230 971,225 917,210 906,210 897,216 892,231 895,306 892,324 886,341 846,416 802,513 777,561 735,624 697,665 676,683 629,716 596,735 553,755 513,769 471,780 365,800 266,836 252,835 240,839 229,852 220,881 220,891 227,904 233,909 248,915 277,940 304,959 358,987 391,998 423,1005 456,1009 496,1010 537,1007 586,999 644,984 696,966 736,949 780,926 820,900 850,876 887,840 919,802 943,769 969,727 989,688 1005,649 1019,605 1027,568 1033,514 1033,480 1030,450 1024,421 1014,391 1000,363 978,328 975,311 975,283 982,247 982,238";
+
+function principalAxisAngle(coordStr) {
+  const nums = coordStr.match(/-?\d+(\.\d+)?/g).map(Number);
+  const pts = [];
+  for (let i = 0; i < nums.length; i += 2) pts.push({ x: nums[i], y: nums[i + 1] });
+  let mx = 0, my = 0;
+  pts.forEach(p => { mx += p.x; my += p.y; });
+  mx /= pts.length; my /= pts.length;
+  let sxx = 0, syy = 0, sxy = 0;
+  pts.forEach(p => {
+    const dx = p.x - mx, dy = p.y - my;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  });
+  sxx /= pts.length; syy /= pts.length; sxy /= pts.length;
+  return { angle: 0.5 * Math.atan2(2 * sxy, sxx - syy), cx: mx, cy: my, pts };
+}
+const bananaInfo = principalAxisAngle(bananaPathD);
+const bananaHorizontalRot = -bananaInfo.angle;
+
+// 輪郭点そのものからPath2Dを作る(重心を原点にしておくと回転・拡大縮小がそのまま使える)
+const bananaShapePath = new Path2D();
+bananaInfo.pts.forEach((p, i) => {
+  const x = p.x - bananaInfo.cx, y = p.y - bananaInfo.cy;
+  if (i === 0) bananaShapePath.moveTo(x, y); else bananaShapePath.lineTo(x, y);
+});
+bananaShapePath.closePath();
+const bananaSpan = Math.max(
+  Math.max(...bananaInfo.pts.map(p => Math.abs(p.x - bananaInfo.cx))),
+  Math.max(...bananaInfo.pts.map(p => Math.abs(p.y - bananaInfo.cy)))
+) * 2;
+
+// バナナを塗って描く(位置・サイズ・色をすべてその場で指定できる = 補間しても"変形"になる)
+function drawBanana(ctx, x, y, size, fillColor, extraRot) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(bananaHorizontalRot + (extraRot || 0));
+  const scale = size / bananaSpan;
+  ctx.scale(scale, scale);
+  ctx.fillStyle = fillColor;
+  ctx.fill(bananaShapePath);
+  ctx.restore();
+}
+
+// ---------------------------------------------
+// 2. 黒バナナ(昼、中央のアクセント)。夜には下の黒い海へ沈めて引きずり込み、消す。
+// ---------------------------------------------
+let bananaDay = null;
+const BANANA_BOB_SCALE = 1.15; // 仮値: 波の揺れに対するバナナの追従度
+
+function layoutBanana() {
+  bananaDay = {
+    x: bookRect.left + bookRect.width / 2,
+    y: bookRect.top + bookRect.height / 2,
+    size: Math.min(bookRect.width, bookRect.height) * 0.62, // 仮値
+  };
+}
+
+// ---------------------------------------------
+// 3. サイズ計算: スマホ=ブラウザの画角そのまま、PC=文庫本の比率
+// ---------------------------------------------
+function isPhone() {
+  return window.innerWidth < 700; // 仮値: この幅未満はスマホ扱い(画角そのままが扉になる)
+}
+const PAPERBACK_RATIO = 0.64; // 仮値: width/height
+
+function computeBookRect() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  if (isPhone()) {
+    return { left: 0, top: 0, width: vw, height: vh };
+  }
+  let bw = vh * PAPERBACK_RATIO;
+  let bh = vh * 0.98; // 仮値: 大きくした
+  if (bw > vw * 0.96) {
+    bw = vw * 0.96;
+    bh = bw / PAPERBACK_RATIO;
+  } else {
+    bw = bh * PAPERBACK_RATIO;
+  }
+  return { left: (vw - bw) / 2, top: (vh - bh) / 2, width: bw, height: bh };
+}
+
+function resize() {
+  if (topStopped) return; // /universe に引き継いだ後は、iframeが全画面を持つ
+  windowW = window.innerWidth;
+  windowH = window.innerHeight;
+  worldMidY = windowH * 0.5;
+
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  bgCanvas.width = Math.round(windowW * dpr);
+  bgCanvas.height = Math.round(windowH * dpr);
+  bgCanvas.style.width = windowW + 'px';
+  bgCanvas.style.height = windowH + 'px';
+
+  const raw = computeBookRect();
+  // 端数ピクセルによる隙間(継ぎ目の黒い縦線)を防ぐため、整数に丸めて
+  // revealLayer/stage/canvasすべてに同じ値を使う
+  bookRect = {
+    left: Math.round(raw.left),
+    top: Math.round(raw.top),
+    width: Math.round(raw.width),
+    height: Math.round(raw.height),
+  };
+
+  offCanvas.width = Math.round(bookRect.width * dpr);
+  offCanvas.height = Math.round(bookRect.height * dpr);
+  buildCurlGeometry();
+
+  [revealLayer, stageEl].forEach(el => {
+    el.style.left = bookRect.left + 'px';
+    el.style.top = bookRect.top + 'px';
+    el.style.width = bookRect.width + 'px';
+    el.style.height = bookRect.height + 'px';
+  });
+
+  layoutNext();
+  layoutBanana();
+  computeBananaNightResampled();
+}
+
+// 扉の裏: iframeは「ウィンドウ全体と同じ大きさ」で置き、本の輪郭の窓から覗かせる
+// (扉を開けきった後の全画面表示と同じレイアウトになるので、ハンドオフでずれない)
+function layoutNext() {
+  const phone = isPhone();
+  phonePoster.style.display = phone ? 'block' : 'none';
+  nextFrame.style.visibility = phone ? 'hidden' : ''; // 'visible'を明示すると、親(revealLayer)のhiddenを突き破って黒く見えてしまう
+  nextFrame.style.left = -bookRect.left + 'px';
+  nextFrame.style.top = -bookRect.top + 'px';
+  nextFrame.style.width = windowW + 'px';
+  nextFrame.style.height = windowH + 'px';
+}
+
+// ---------------------------------------------
+// 4. 黄色い波(絶対座標)
+// ---------------------------------------------
+function waveY(x, t) {
+  return (
+    worldMidY +
+    Math.sin(x * 0.013 + t * 0.5) * 10 +
+    Math.sin(x * 0.032 - t * 0.9) * 6 +
+    Math.sin(x * 0.07 + t * 1.6) * 3
+  );
+}
+
+// 波(海)の輪郭を点の配列として作る。Path2Dにも、輪郭のリサンプリング(形の変形)にも使う。
+const SEA_EDGE_MARGIN = 40; // 仮値: 丸め処理で端が内側に入る分を見込んで横に広げておく
+
+function buildWavePoints(t) {
+  const pts = [];
+  const step = 6;
+  for (let x = -SEA_EDGE_MARGIN; x <= windowW + SEA_EDGE_MARGIN; x += step) pts.push({ x, y: waveY(x, t) });
+  pts.push({ x: windowW + SEA_EDGE_MARGIN, y: windowH });
+  pts.push({ x: -SEA_EDGE_MARGIN, y: windowH });
+  return pts;
+}
+
+// 海(黒)専用のパス。波の上端はなめらかに、画面下の2つの角(本来は直角)は
+// 丸めずに直線のまま保つ。wavePtsの末尾2点が必ずその角(右下・左下)であることを前提にしている。
+function buildSeaPath(wavePts) {
+  const topCount = wavePts.length - 2;
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const path = new Path2D();
+  const first = wavePts[0];
+  path.moveTo(first.x, first.y);
+  for (let i = 0; i < topCount - 1; i++) {
+    const cur = wavePts[i];
+    const next = wavePts[i + 1];
+    const m = mid(cur, next);
+    path.quadraticCurveTo(cur.x, cur.y, m.x, m.y);
+  }
+  path.lineTo(wavePts[topCount - 1].x, wavePts[topCount - 1].y); // 波の右端まで直線で正確に合わせる
+  path.lineTo(wavePts[topCount].x, wavePts[topCount].y);         // 右下の角(直角のまま)
+  path.lineTo(wavePts[topCount + 1].x, wavePts[topCount + 1].y); // 左下の角(直角のまま)
+  path.closePath(); // 左下 -> 波の左端(first)へ直線で戻る
+  return path;
+}
+
+function pointsToPath(pts) {
+  // 各点を直線でつなぐと多角形(角ばった輪郭)になるので、
+  // 点同士の中点をなめらかな二次曲線でつないで丸みを持たせる。
+  const path = new Path2D();
+  const n = pts.length;
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const start = mid(pts[n - 1], pts[0]);
+  path.moveTo(start.x, start.y);
+  for (let i = 0; i < n; i++) {
+    const cur = pts[i];
+    const next = pts[(i + 1) % n];
+    const m = mid(cur, next);
+    path.quadraticCurveTo(cur.x, cur.y, m.x, m.y);
+  }
+  path.closePath();
+  return path;
+}
+
+// 閉じた多角形の輪郭を、弧長が等間隔になるようn個の点に引き直す。
+// 頂点の数も並び順も違う2つの形を「対応する点同士」でなめらかに補間するために使う。
+function resamplePolygon(pts, n) {
+  const len = pts.length;
+  const segLens = [];
+  let total = 0;
+  for (let i = 0; i < len; i++) {
+    const a = pts[i], b = pts[(i + 1) % len];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    segLens.push(d);
+    total += d;
+  }
+  const out = [];
+  let segIndex = 0;
+  let segStart = 0;
+  for (let i = 0; i < n; i++) {
+    const target = (i / n) * total;
+    while (segIndex < len - 1 && segStart + segLens[segIndex] < target) {
+      segStart += segLens[segIndex];
+      segIndex++;
+    }
+    const a = pts[segIndex], b = pts[(segIndex + 1) % len];
+    const segLen = segLens[segIndex] || 1e-6;
+    const localT = Math.min(1, Math.max(0, (target - segStart) / segLen));
+    out.push({ x: lerp(a.x, b.x, localT), y: lerp(a.y, b.y, localT) });
+  }
+  return out;
+}
+
+const MORPH_POINTS = 160; // 仮値: 変形になめらかさに使う点の数
+
+// 多角形の符号付き面積(=頂点の並びが時計回りか反時計回りか)
+function signedArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a / 2;
+}
+
+// targetをreferenceに「向き」と「開始位置」を揃える。
+// 向きが逆だと対応する点同士を結ぶ線が交差してねじれて見え、
+// 開始位置がズレていると各点が不必要に大回りして移動するため、
+// 総移動距離が最小になる回転位置を総当たりで探す。
+function alignPolygonToReference(target, reference) {
+  let pts = target.slice();
+  if (Math.sign(signedArea(pts)) !== Math.sign(signedArea(reference))) {
+    pts.reverse();
+  }
+  const n = pts.length;
+  let bestShift = 0;
+  let bestCost = Infinity;
+  for (let s = 0; s < n; s++) {
+    let cost = 0;
+    for (let i = 0; i < n; i++) {
+      const a = reference[i];
+      const b = pts[(i + s) % n];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      cost += dx * dx + dy * dy;
+    }
+    if (cost < bestCost) { bestCost = cost; bestShift = s; }
+  }
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = pts[(i + bestShift) % n];
+  return out;
+}
+
+function generateCirclePoints(cx, cy, r, n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return pts;
+}
+
+// 黄色いかたちの変形先を2段階でキャッシュしておく:海の輪郭 -> 円 -> バナナの輪郭。
+// 各段階は直前の段階に向き・開始位置を揃えてあるので、途中でねじれない。
+let circleStageResampled = null;
+let bananaNightTargetResampled = null;
+function computeBananaNightResampled() {
+  const x = windowW * 0.18; // 仮値: キャンバス内は左下だが、180度回転後に画面上は右上になる
+  const y = windowH * 0.82; // 仮値: 同上
+  const size = Math.min(windowW, windowH) * 0.2; // 仮値
+  const scale = size / bananaSpan;
+  const rot = bananaHorizontalRot + (110 * Math.PI / 180); // 時計回りに90度+20度=110度
+  const cos = Math.cos(rot), sin = Math.sin(rot);
+  const abs = bananaInfo.pts.map(p => {
+    const lx = (p.x - bananaInfo.cx) * scale;
+    const ly = (p.y - bananaInfo.cy) * scale;
+    const rx = lx * cos - ly * sin;
+    const ry = lx * sin + ly * cos;
+    return { x: x + rx, y: y + ry };
+  });
+  const bananaResampled = resamplePolygon(abs, MORPH_POINTS);
+
+  // 基準として、揺れのない(t=0の)波の輪郭に向きと開始位置を揃えておく
+  const referenceWave = resamplePolygon(buildWavePoints(0), MORPH_POINTS);
+
+  // 円(海とバナナの中間段階)。中心・半径はバナナの目的地に近い場所に置く
+  const circleRadius = size * 0.5; // 仮値
+  const circlePts = generateCirclePoints(x, y, circleRadius, MORPH_POINTS);
+  circleStageResampled = alignPolygonToReference(circlePts, referenceWave);
+
+  // バナナは円に向きと開始位置を揃える(海→円→バナナ、それぞれの区間でねじれない)
+  bananaNightTargetResampled = alignPolygonToReference(bananaResampled, circleStageResampled);
+}
+
+
+// ---------------------------------------------
+// 5. テキスト(すべて絶対座標)。昼/夜で内容を切り替え、nightTでクロスフェードする。
+//    #sceneRotator全体がnightTに応じて回転するので、テキストだけは画面上で
+//    位置が動かないよう、描画位置をあらかじめ逆回転させておく。
+// ---------------------------------------------
+const SKY_TEXT_DAY = 'Just a banana';
+const SKY_TEXT_NIGHT = 'Reflected by Metaphony.';
+const SEA_TEXT_DAY = ['The banana was here.', 'Someone found it.', 'The banana was here either way.'];
+const SEA_TEXT_NIGHT = ['An apple fell. There was a discoverer.', 'It will never fall.'];
+const SEA_TEXT_NIGHT_LOWER = ['Existence is not discovery.', 'It is preserved in the sea of information.'];
+
+// 画面上で固定して見せたい位置(sx,sy)を、#sceneRotatorの現在の回転角(rotationDeg)を
+// 打ち消すように逆回転させたキャンバス座標に変換する。
+function counterRotatePoint(sx, sy) {
+  const theta = rotationDeg * Math.PI / 180; // rotate(rotationDeg deg) をラジアンに
+  const cx = windowW / 2, cy = windowH / 2;
+  const dx = sx - cx, dy = sy - cy;
+  const cos = Math.cos(theta), sin = Math.sin(theta);
+  return {
+    x: cx + (dx * cos + dy * sin),
+    y: cy + (-dx * sin + dy * cos),
+  };
+}
+
+function drawSeaText(ctx) {
+  const theta = rotationDeg * Math.PI / 180;
+  const baseSize = Math.min(windowW, windowH) * 0.045;
+
+  // 昼側: 黄色いかたちと同じように、収縮しながら消える(フェードだけでなくスケールも0へ)
+  const cy = worldMidY + (windowH - worldMidY) * 0.55;
+  const p = counterRotatePoint(windowW / 2, cy);
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(-theta); // 位置だけでなく、文字の向きも逆回転させて正立させる
+  const dayScale = Math.max(0.001, 1 - nightT * 2.6); // 仮値: 収縮速度を上げた
+  ctx.scale(dayScale, dayScale);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `italic 400 ${baseSize}px 'EB Garamond', Georgia, serif`;
+  ctx.globalAlpha = Math.max(0, 0.95 * (1 - nightT * 2.6));
+  const dayLineHeight = baseSize * 1.5;
+  SEA_TEXT_DAY.forEach((line, i) => {
+    ctx.fillText(line, 0, (i - (SEA_TEXT_DAY.length - 1) / 2) * dayLineHeight);
+  });
+  ctx.restore();
+
+  // 夜側: "Just a banana"と同じ高さに配置
+  const cyNight = worldMidY * 0.45; // 画面の上から22.5%。下のテキスト(77.5%)と画面中央を挟んで対称
+  const pNight = counterRotatePoint(windowW / 2, cyNight);
+  ctx.save();
+  ctx.translate(pNight.x, pNight.y);
+  ctx.rotate(-theta);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `italic 400 ${baseSize}px 'EB Garamond', Georgia, serif`;
+  ctx.globalAlpha = 0.95 * nightT;
+  const nightLineHeight = baseSize * 1.5;
+  SEA_TEXT_NIGHT.forEach((line, i) => {
+    ctx.fillText(line, 0, (i - (SEA_TEXT_NIGHT.length - 1) / 2) * nightLineHeight);
+  });
+  ctx.restore();
+
+}
+
+// 夜の下部テキスト("Existence is not discovery.")。
+// 「The banana was here.」と同じ位置(画面の上から77.5%)に置き、
+// 上の"An apple fell..."(22.5%)と画面中央を挟んで上下対称にする。
+// 夜は画面下側が空(青)の領域になるため、海のクリップの外で描く。
+function drawNightLowerText(ctx) {
+  const theta = rotationDeg * Math.PI / 180;
+  const baseSize = Math.min(windowW, windowH) * 0.045;
+  const cy2 = worldMidY + (windowH - worldMidY) * 0.55; // 画面の上から77.5%("The banana was here."と同じ位置)
+  const p2 = counterRotatePoint(windowW / 2, cy2);
+  ctx.save();
+  ctx.translate(p2.x, p2.y);
+  ctx.rotate(-theta);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `italic 400 ${baseSize * 0.82}px 'EB Garamond', Georgia, serif`;
+  ctx.globalAlpha = 0.9 * nightT;
+  const lowerLineHeight = baseSize * 0.82 * 1.5;
+  SEA_TEXT_NIGHT_LOWER.forEach((line, i) => {
+    ctx.fillText(line, 0, (i - (SEA_TEXT_NIGHT_LOWER.length - 1) / 2) * lowerLineHeight);
+  });
+  ctx.restore();
+}
+
+function drawWordmark(ctx) {
+  // 仕様変更: この文字は逆回転させず、黒/黄色/バナナと同じく画面の回転にそのまま従わせる
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const size = Math.min(windowW, windowH) * 0.058;
+  ctx.font = `500 ${size}px 'EB Garamond', Georgia, serif`;
+  ctx.fillStyle = '#ffffff';
+  ctx.letterSpacing = '0.14em';
+  const y = worldMidY * 0.45;
+
+  ctx.globalAlpha = 1 - nightT;
+  ctx.fillText(SKY_TEXT_DAY, windowW / 2, y);
+  ctx.restore();
+
+  // 夜側の文言は回転にそのまま従うので、あらかじめ180度回転させて描いておく。
+  // 画面全体の180度回転と打ち消し合って、夜(反転しきった状態)で正立して読めるようにするため。
+  // この位置(空=青の領域)はそのままで、回転後は画面下側の青い部分に表示される。
+  ctx.save();
+  ctx.translate(windowW / 2, y);
+  ctx.rotate(Math.PI);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `500 ${size}px 'EB Garamond', Georgia, serif`;
+  ctx.fillStyle = '#ffffff';
+  ctx.letterSpacing = '0.14em';
+  ctx.globalAlpha = nightT;
+  ctx.fillText(SKY_TEXT_NIGHT, 0, 0);
+  ctx.restore();
+}
+
+// ---------------------------------------------
+// 6. 昼/夜の連続補間パラメータ(0=昼 〜 1=夜)
+// ---------------------------------------------
+let nightT = 0;
+let nightTarget = 0;
+
+// 画面の回転角。nightTとは別に持ち、目標値を常に+180ずつ増やすことで、
+// 昼→夜・夜→昼どちらの切り替えでも必ず時計回りになるようにする。
+let rotationDeg = 0;
+let rotationTarget = 0;
+
+// ---------------------------------------------
+// 7. シーン全体を絶対座標で描く1つの関数。
+//    bg(オフセット0)にも、front(book矩形の分だけ平行移動)にも同じ関数を使うことで、
+//    2枚のcanvasの間に色や座標のズレが原理的に起きないようにする。
+//
+//    昼/夜は「別のシーンをフェードで切り替える」のではなく、
+//    ・空(矩形)はずっと青のまま変えない
+//    ・海(波の領域)は形はそのまま、色を黄→黒へ補間(=黒い海が下側に広がっていく)
+//    ・「黄色いかたち」は海の輪郭そのものをバナナの輪郭(画面下部)へ頂点対応で
+//      変形させる(=黄色い海が縮んでバナナになり、黒い海に包まれるように下側に留まる)
+//    ・黒バナナ(昼の中央のアクセント)は、夜には下の黒い海へ沈めて引きずり込み、消す
+// ---------------------------------------------
+function renderScene(ctx, offsetX, offsetY, t) {
+  ctx.save();
+  ctx.translate(-offsetX, -offsetY);
+
+  // 空(矩形): 青を土台(ベース)にする。
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, windowH);
+  skyGrad.addColorStop(0, '#0d2c5c');
+  skyGrad.addColorStop(1, '#061632');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, windowW, windowH);
+
+  drawWordmark(ctx);
+
+  // 黒バナナ(昼の中央のアクセント): 波の"手前"にするため、波より先に描く。
+  // 波の実際の値に合わせて上下させ、波に浮かんでいるように見せる。
+  // 夜にはフェードではなく、そのまま下の海へ沈めて引きずり込む(海の塗りは後で描かれるので、
+  // 沈んだ分だけ自然に覆われて見えなくなる)。
+  if (bananaDay) {
+    const bob = (waveY(bananaDay.x, t) - worldMidY) * BANANA_BOB_SCALE * (1 - nightT);
+    const sinkY = windowH + bananaDay.size * 0.6; // 仮値: 海の底、画面外まで沈める
+    const by = lerp(bananaDay.y, sinkY, nightT) + bob;
+    drawBanana(ctx, bananaDay.x, by, bananaDay.size, '#000000');
+  }
+
+  // 海(波の領域): 青い土台の上に黒を乗せるだけのシンプルな2層構成にする
+  const wavePts = buildWavePoints(t);
+  const wavePath = buildSeaPath(wavePts);
+  ctx.fillStyle = '#000000';
+  ctx.fill(wavePath);
+
+  // 黄色いかたち: 海の輪郭 -> 円 -> バナナの輪郭へ、頂点対応で直接変形させる(画面下部、黒い海の中へ)。
+  // 色はずっと黄色のまま(色を変えるのではなく、かたち自体を変える)。
+  // 昼(nightT=0)では海と完全に同じ形・同じ黄色で重なるので、下の黒い海は見えない。
+  let morphedPts = null;
+  if (bananaNightTargetResampled && circleStageResampled) {
+    const waveResampled = resamplePolygon(wavePts, MORPH_POINTS);
+    const phase1 = Math.min(1, nightT * 2);     // 海 -> 円(前半)
+    const phase2 = Math.max(0, Math.min(1, nightT * 2 - 1)); // 円 -> バナナ(後半)
+    const morphed = waveResampled.map((p, i) => {
+      const c = circleStageResampled[i];
+      const b = bananaNightTargetResampled[i];
+      const mx = lerp(p.x, c.x, phase1);
+      const my = lerp(p.y, c.y, phase1);
+      return { x: lerp(mx, b.x, phase2), y: lerp(my, b.y, phase2) };
+    });
+    morphedPts = morphed;
+    const morphPath = pointsToPath(morphed);
+    const morphGrad = ctx.createLinearGradient(0, 0, 0, windowH);
+    morphGrad.addColorStop(0, '#ffe14d');
+    morphGrad.addColorStop(1, '#f2b400');
+    ctx.fillStyle = morphGrad;
+    if (!orbitS) ctx.fill(morphPath);
+  }
+
+  // テキスト: 海の範囲だけにクリップ。黄色いかたちより後に描くことで、
+  // 昼の間も不透明な黄色に隠れず前面に出るようにする。
+  ctx.save();
+  ctx.clip(wavePath);
+  drawSeaText(ctx);
+  drawNightLowerText(ctx);
+  ctx.restore();
+
+  drawOrbit(ctx, morphedPts); // 連打演出(黒背景 + 地球 + 黄色レイヤーの周回バナナ)
+
+  ctx.restore();
+}
+
+// ---------------------------------------------
+// 7. メインループ
+// ---------------------------------------------
+function frame(now) {
+  if (topStopped) return; // 引き継ぎ後はトップページの描画を止める(GPU節約)
+  const t = now * 0.001;
+
+  nightT += (nightTarget - nightT) * 0.05; // 仮値: イージングの速さ
+  rotationDeg += (rotationTarget - rotationDeg) * 0.05; // nightTと同じ速さで追従させる
+  curlProgress += (curlTarget - curlProgress) * curlEaseSpeed; // 仮値: 開閉のイージング
+  if (orbitS) updateOrbit(now);
+
+  // 扉をめくっていない間は、重ね合わせ用の2層(revealLayer / Three.jsのstage)を非表示にして、
+  // 背景canvasだけでシーン全体を描く。2層を重ねると、拡大(1.008倍)やテクスチャの再サンプリングの
+  // 違いで、本の領域の内と外でバナナやテキストがわずかにズレてゆがんで見えるため。
+  const curling = dragging || curlProgress > 0.002;
+  if (curling !== layersVisible) {
+    layersVisible = curling;
+    const d = curling ? '' : 'none';
+    // display:none / visibility:hidden にすると、中のiframe(/universe)が起動しないため、隠さずに背景canvasの後ろへ回す
+    revealLayer.style.zIndex = curling ? '0' : '-1';
+    stageEl.style.display = d;
+  }
+  // 継ぎ目隠しの拡大は、めくり始めに合わせて0->1.008倍へなめらかに上げる(急に画面が動かないように)
+  renderer.domElement.style.transform = `scale(${1 + 0.008 * Math.min(1, curlProgress / 0.05)})`;
+
+  sceneRotator.style.transform = `rotate(${rotationDeg}deg)`; // 常に時計回り(目標値を常に+180するため)
+
+  bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0); // 以降の描画はCSSピクセル座標のまま、dpr倍の解像度で出る
+  bgCtx.clearRect(0, 0, windowW, windowH);
+  renderScene(bgCtx, 0, 0, t);
+
+  // 重ね合わせ層が非表示の間は、offCanvasの描画とテクスチャ更新は不要(負荷削減)
+  if (layersVisible) {
+    offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    offCtx.clearRect(0, 0, bookRect.width, bookRect.height);
+    renderScene(offCtx, bookRect.left, bookRect.top, t);
+    renderThree();
+  }
+
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------
+// 8. 黒バナナをつかんで左にドラッグ -> 扉が表紙のように、紙の長さを保ったまま
+//    手前方向に曲がりながら開く。曲がりがきつくなった先端から裏面(黄色)が覗く。
+//    ドラッグしきったらリンクへ遷移する。
+// ---------------------------------------------
+const URL_PHONE = '/meteor';    // スマホ: ページ追加型スクロールのチュートリアル
+const URL_PC    = '/universe';  // PC: 3D宇宙
+let topStopped = false;         // trueの間、トップページの描画とresizeは止まる
+let nextLoaded = false, nextReady = false;
+
+// PC: 黒バナナに触れそう(hover)/触れた(pointerdown)時に初めて /universe を読み込む
+function loadNext() {
+  if (nextLoaded || isPhone()) return;
+  nextLoaded = true;
+  nextFrame.addEventListener('load', () => { nextReady = true; }, { once: true });
+  nextFrame.src = URL_PC + '/';
+}
+
+// 扉を開けきった時の処理
+function finishDoor() {
+  if (isPhone()) {
+    // 最初の星をいったん消してから遷移(/meteor側は星が0から現れるため、点滅して見えないように)
+    phonePoster.classList.add('fade');
+    setTimeout(() => { window.location.href = URL_PHONE; }, 380);
+    return;
+  }
+  loadNext();
+  let done = false;
+  const go = () => {
+    if (done) return; done = true;
+    topStopped = true;
+    // 読み込み済みのiframeをそのまま全画面にし、URLだけ /universe に変える(再読み込みなし)
+    history.pushState({ universe: true }, '', URL_PC);
+    stageEl.style.display = 'none';
+    bgCanvas.style.display = 'none';
+    moonBtn.style.display = 'none';
+    sceneRotator.style.transform = 'none';
+    Object.assign(revealLayer.style, { left: '0', top: '0', width: '100%', height: '100%', zIndex: '10' });
+    Object.assign(nextFrame.style, { left: '0', top: '0', width: '100%', height: '100%', pointerEvents: 'auto' });
+    try { document.title = nextFrame.contentDocument.title || document.title; } catch (e) {}
+    try { nextFrame.contentWindow.focus(); } catch (e) {}
+  };
+  if (nextReady) go();
+  else {
+    nextFrame.addEventListener('load', go, { once: true });
+    setTimeout(() => { if (!done) { done = true; window.location.href = URL_PC; } }, 6000); // 読み込めなければ通常遷移
+  }
+}
+// 引き継ぎ後に「戻る」を押したら、トップページを最初から表示し直す
+window.addEventListener('popstate', () => { if (topStopped) location.reload(); });
+const COMPLETE_THRESHOLD = 0.82; // 仮値: 0〜1のうちこれ以上開いたら「ドラッグしきった」
+
+let curlTarget = 0;
+let curlEaseSpeed = 0.18; // 仮値: ドラッグ中は追従を速く、離した後は緩やかに
+let dragging = false;
+let dragStartX = 0;
+let dragStartProgress = 0;
+
+function currentBananaPos() {
+  return bananaDay;
+}
+
+function isOverBlackBanana(clientX, clientY) {
+  if (isNight) return false; // 夜は扉を開けない(黒バナナのクリック判定なし)
+  const b = currentBananaPos();
+  if (!b) return false;
+  const dx = clientX - b.x;
+  const dy = clientY - b.y;
+  const r = b.size * 0.42; // 仮値
+  return dx * dx + dy * dy < r * r;
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (!isOverBlackBanana(e.clientX, e.clientY)) return;
+  loadNext();
+  dragging = true;
+  dragStartX = e.clientX;
+  dragStartProgress = curlTarget;
+  curlEaseSpeed = 0.45; // ドラッグ中は指にほぼ追従させる
+  document.body.style.cursor = 'grabbing';
+  if (e.target.setPointerCapture) e.target.setPointerCapture(e.pointerId);
+});
+
+document.addEventListener('pointermove', (e) => {
+  if (isOverBlackBanana(e.clientX, e.clientY) && !dragging) {
+    loadNext();
+    document.body.style.cursor = 'grab';
+  } else if (!dragging) {
+    document.body.style.cursor = 'default';
+  }
+  if (!dragging) return;
+  const deltaX = e.clientX - dragStartX;
+  const range = bookRect.width * 0.45; // 仮値: 感度を上げた(以前は0.85)
+  const delta = Math.min(0, deltaX);
+  curlTarget = Math.max(0, Math.min(1, dragStartProgress + (-delta / range)));
+});
+
+function endDrag() {
+  if (!dragging) return;
+  dragging = false;
+  document.body.style.cursor = 'default';
+  curlEaseSpeed = 0.1; // 離した後はゆっくり落ち着かせる
+
+  if (curlTarget >= COMPLETE_THRESHOLD) {
+    curlTarget = 1;
+    setTimeout(finishDoor, 500);
+  } else {
+    curlTarget = 0;
+  }
+}
+document.addEventListener('pointerup', endDrag);
+document.addEventListener('pointercancel', endDrag);
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
+// スマホのブラウザはアドレスバーの出し引きでinnerHeightが動的に変わり、
+// 通常のresizeイベントだけでは追いきれないことがあるため、visualViewportも監視する
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', resize);
+  window.visualViewport.addEventListener('scroll', resize);
+}
+initThree();
+resize();
+// 一部のモバイルブラウザは読み込み直後のinnerHeightが実際の表示と一瞬ずれることがあるため、
+// 少し遅れて念のため再計算する
+setTimeout(resize, 300);
+requestAnimationFrame(frame);
+
+// ---------------------------------------------
+// 9. 右上のボタン: 押すたびに画面中央を軸に時計回転(nightTに連動、常に0→180度)。
+//    ボタン自体のアイコンは昼→夜への切り替え時は三日月、夜→昼への切り替え時は太陽を表示する。
+//    同時に空は青のまま、海は黒くなり、黄色いかたちは海の輪郭 -> 円 -> バナナの輪郭へ
+//    変形しながら右下(反転により画面上では左上になる)へ移動する。
+//    黒バナナ(昼のアクセント)は下の黒い海へ沈んで消える。
+//
+//    テキスト(drawWordmark / drawSeaText)だけは回転の影響を受けないよう、
+//    描画位置をnightTに応じて逆回転(counterRotate)させて画面上で固定して見せている。
+// ---------------------------------------------
+let isNight = false;
+moonBtn.addEventListener('click', () => {
+  if (orbitS) return;
+  isNight = !isNight;
+  moonBtn.classList.toggle('is-night', isNight);
+  nightTarget = isNight ? 1 : 0;
+  rotationTarget += 180; // 常に増加方向 = 常に時計回り
+});
+
+// ---------------------------------------------
+// 10. 連打 -> 黄色いレイヤーがバナナになって地球の周りを加速周回 -> 右上45度へ吹っ飛ぶ -> 別ページ
+//    昼夜ボタンを ORBIT_WINDOW_MS 以内に ORBIT_CLICKS 回押すと発動する。
+//    ・青い空は黒背景 + 単色の地球の円に置き換わる(drawOrbit)
+//    ・黄色いレイヤーは、その時点の変形途中のかたちのまま周回軌道へ移り、そのままバナナとして回る
+// ---------------------------------------------
+const ORBIT_DEST = '/moon'; // 吹っ飛んだ先のページ
+const ORBIT_CLICKS = 8;        // 仮値: 発動に必要な連打回数
+const ORBIT_WINDOW_MS = 3000;  // 仮値: この時間内に上の回数を押す
+const ORBIT_OMEGA0_SCALE = 0.6; // 仮値: 連打の平均角速度に対する初期角速度の倍率(1.0で同じ速さ)
+const ORBIT_OMEGA_MAX = 15;    // 仮値: 最高角速度(rad/s)。初期角速度の2倍の方が大きければそちらを使う
+const ORBIT_OMEGA_CAP = 30;    // 仮値: 角速度の上限(rad/s)。速すぎてコマ落ちして見えるのを防ぐ
+const ORBIT_SPIN_MS = 3000;    // 仮値: 加速周回の長さ
+const ORBIT_FLING_MS = 900;    // 仮値: 吹っ飛んでから遷移するまで
+const RELEASE_THETA = Math.PI * 5 / 4; // 時計回りの周回で、この位置の接線が右上45度
+const clickTimes = [];
+const smooth01 = x => x * x * (3 - 2 * x);
+
+moonBtn.addEventListener('click', () => {
+  const now = performance.now();
+  clickTimes.push(now);
+  while (clickTimes.length && now - clickTimes[0] > ORBIT_WINDOW_MS) clickTimes.shift();
+  if (!orbitS && clickTimes.length >= ORBIT_CLICKS) startOrbit();
+});
+
+function startOrbit() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    orbitS = { done: true };
+    location.href = ORBIT_DEST; // 動きを減らす設定の人には演出なしで遷移
+    return;
+  }
+  if (!isNight) { // 夜の状態(黄色いレイヤー=バナナ)へ向かわせる
+    isNight = true;
+    moonBtn.classList.add('is-night');
+    nightTarget = 1;
+    rotationTarget += 180;
+  }
+  const now = performance.now();
+  // 連打の平均角速度(1クリック=180度回転)を、バナナの初期角速度に引き継ぐ
+  const n = clickTimes.length;
+  const span = Math.max(0.3, (clickTimes[n - 1] - clickTimes[0]) / 1000);
+  const omega0 = Math.min(ORBIT_OMEGA_CAP, ((n - 1) / span) * Math.PI * ORBIT_OMEGA0_SCALE);
+  const omegaMax = Math.min(ORBIT_OMEGA_CAP, Math.max(ORBIT_OMEGA_MAX, omega0 * 2));
+  orbitS = { t0: now, last: now, theta: 0, omega: omega0, omega0, omegaMax, x: windowW / 2, y: windowH / 2,
+             fade: 0, join: 0, flash: 0, fling: null, done: false };
+}
+
+// 戻るボタン(bfcache)で戻ってきた時に、演出の状態を残さない
+window.addEventListener('pageshow', e => {
+  if (e.persisted) { orbitS = null; clickTimes.length = 0; curlTarget = 0; curlProgress = 0; dragging = false; }
+});
+
+function updateOrbit(now) {
+  const o = orbitS;
+  if (o.done) return;
+  const dt = Math.min(0.05, (now - o.last) / 1000);
+  o.last = now;
+  const t = now - o.t0;
+  const m = Math.min(windowW, windowH), cx = windowW / 2, cy = windowH / 2, orbitR = m * 0.34;
+  o.fade = Math.min(1, t / 800);  // 黒背景と地球が現れる
+  o.join = Math.min(1, t / 1000); // 黄色いレイヤーが軌道に乗る
+  if (!o.fling) {
+    const k = Math.min(1, t / ORBIT_SPIN_MS);
+    o.omega = o.omega0 + (o.omegaMax - o.omega0) * k * k; // 連打の速さから始めて加速
+    const prev = o.theta;
+    o.theta += o.omega * dt;
+    o.x = cx + orbitR * Math.cos(o.theta);
+    o.y = cy + orbitR * Math.sin(o.theta);
+    const crossed = Math.floor((prev - RELEASE_THETA) / (2 * Math.PI)) <
+                    Math.floor((o.theta - RELEASE_THETA) / (2 * Math.PI));
+    if (t >= ORBIT_SPIN_MS && crossed) { // 放出位置を通過した瞬間に右上45度へ
+      const v = o.omega * orbitR * 0.3; // 見えるように実際の接線速度より落としている
+      o.x = cx + orbitR * Math.cos(RELEASE_THETA);
+      o.y = cy + orbitR * Math.sin(RELEASE_THETA);
+      o.fling = { vx: Math.SQRT1_2 * v, vy: -Math.SQRT1_2 * v, t0: now };
+    }
+  } else {
+    const f = o.fling;
+    o.theta += o.omega * dt;
+    f.vx *= 1 + 1.5 * dt;
+    f.vy *= 1 + 1.5 * dt;
+    o.x += f.vx * dt;
+    o.y += f.vy * dt;
+    const r = (now - f.t0) / ORBIT_FLING_MS;
+    o.flash = r > 0.5 ? Math.min(1, (r - 0.5) * 2) : 0; // 白くフラッシュ
+    if (r >= 1) { o.done = true; location.href = ORBIT_DEST; }
+  }
+}
+
+function drawOrbit(ctx, pts) {
+  const o = orbitS;
+  if (!o || o.done && !pts) return;
+  const m = Math.min(windowW, windowH), cx = windowW / 2, cy = windowH / 2;
+  ctx.save();
+  // 黒背景 + 単色の地球(canvas中心=画面中心なので回転の影響を受けない)
+  ctx.globalAlpha = o.fade;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, windowW, windowH);
+  ctx.fillStyle = '#0d2c5c'; // 元の空の青(上側の色)と同じ
+  ctx.beginPath();
+  ctx.arc(cx, cy, m * 0.18 * (0.4 + 0.6 * smooth01(o.fade)), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // 黄色いレイヤー(変形後のポリゴン)を、重心を軌道位置へ動かしながら回して描く
+  if (pts) {
+    let sx = 0, sy = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const p of pts) {
+      sx += p.x; sy += p.y;
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+    }
+    const c0 = { x: sx / pts.length, y: sy / pts.length };
+    const diag = Math.hypot(x1 - x0, y1 - y0) || 1;
+    const j = smooth01(o.join);
+    const target = counterRotatePoint(o.x, o.y); // 画面上の位置 -> canvas座標
+    const rot = rotationDeg * Math.PI / 180;
+    const sc = lerp(1, (m * 0.2) / diag, j);
+    ctx.translate(lerp(c0.x, target.x, j), lerp(c0.y, target.y, j));
+    ctx.rotate(j * (o.theta - rot)); // 画面上でthetaだけ回って見えるように回転を打ち消す
+    ctx.scale(sc, sc);
+    ctx.translate(-c0.x, -c0.y);
+    const yg = ctx.createLinearGradient(0, y0, 0, y1); // 元の黄色いレイヤーと同じ2色
+    yg.addColorStop(0, '#ffe14d');
+    yg.addColorStop(1, '#f2b400');
+    ctx.fillStyle = yg;
+    ctx.fill(pointsToPath(pts));
+  }
+  ctx.restore();
+  if (o.flash) {
+    ctx.save();
+    ctx.globalAlpha = o.flash;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, windowW, windowH);
+    ctx.restore();
   }
 }
 </script>
-<script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
-<script type="module" src="./js/main.js"></script>
 </body>
 </html>

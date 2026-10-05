@@ -1,0 +1,1512 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>Metaphony — tutorial preview</title>
+<script>
+/* Always start from the starburst. The page is driven by the scroll position, and the scroll is locked
+   until the burst is clicked, so a position restored by the browser on reload (or when coming back to
+   the page) would show the middle of the story with the burst on top of it. */
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+window.scrollTo(0, 0);
+// returning through the back/forward cache brings back the old state (opened, scrolled, ...): start over
+window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400;1,500;1,600&family=Playfair+Display:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme: light;
+  --paper:#f4f1ea;
+  --ink:#14120f;
+  --ink-soft: rgba(20,18,15,0.55);
+  --left: 6vw;
+  --mx: 2vw;   /* the paper page sits at .55x this from the edge (see .page) — kept small so the page
+                  reaches nearly to the screen edge; this full value is the gutter left for stars and
+                  titles inside it, kept minimal, and collapsed once the camera has been orbited (see
+                  body.expanded below) */
+  --my: 2.4vh;
+  --axis-label-gap: 1.8vh;
+  --burst-size: clamp(56px, 20vw, 100px);  /* the starburst before the click */
+  /* the starburst's bottom edge is this far above the axis row. After the click it shrinks to .35 about its centre,
+     and it then sits right under The Catcher (--burst-catcher-gap below the title), clearly nearer to it than to
+     "Nine Stories", which stands on the axis row. The Catcher does not depend on this: it stays where it appears
+     (see entryCatcher.style.transform in the script: 7vh + --burst-size above the axis row). */
+  --burst-catcher-gap: 1.2vh;
+  --burst-lift: calc(7vh + var(--burst-size) * 0.325 - var(--burst-catcher-gap));   /* = (7vh + size) - 0.675 size - gap: the centre is size/2 above the lift line, the shrunken star's top is .175 size above its centre */
+}
+/* registered so the collapse to full-bleed below (body.expanded) animates rather than jumping,
+   the same way --paper/--ink do */
+@property --mx{ syntax:'<length>'; inherits:true; initial-value:2vw; }
+@property --my{ syntax:'<length>'; inherits:true; initial-value:2.4vh; }
+:root{ transition:--mx .6s ease, --my .6s ease; }
+body.expanded{ --mx:0px; --my:0px; }
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:var(--paper);color:var(--ink);}
+body{ font-family:'Cormorant Garamond', serif; }
+body.locked{ overflow:hidden; height:100dvh; }
+
+/* --- finale: reverse scroll swaps paper and ink. The two colours are registered so that a change
+   of --paper / --ink on :root is animated, and everything drawn with var(--paper) / var(--ink)
+   (background, text, axis lines) follows in step. */
+@property --paper{ syntax:'<color>'; inherits:true; initial-value:#f4f1ea; }
+@property --ink{ syntax:'<color>'; inherits:true; initial-value:#14120f; }
+:root{ transition: --paper 1.8s ease, --ink 1.8s ease; }
+:root.inverted{
+  --paper:#14120f;
+  --ink:#f4f1ea;
+  --ink-soft: rgba(244,241,234,0.55);
+}
+/* the paper world (sheets, yellowed edges) goes with the paper */
+.pages, .vignette-layer{ transition: opacity 1.8s ease; }
+:root.inverted .pages,
+:root.inverted .vignette-layer{ opacity:0; }
+
+.track{ height:1100dvh; } /* replaced from JS by the length of the scroll timeline (SCROLL_END) */
+
+/* paperback: translucent sheets stacked behind everything, added one by one
+   as the text appears (opacity/offset driven by scroll, see PAGE_AT) */
+.pages{ position:fixed; inset:0; z-index:1; pointer-events:none; }
+.page{
+  position:absolute;
+  inset: calc(var(--my) * .55) calc(var(--mx) * .55);
+  background:rgba(255,255,255,.16);
+  border:1px solid rgba(20,18,15,.07);
+  box-shadow:0 1px 6px rgba(60,44,20,.06);
+  opacity:0;
+}
+
+.vignette-layer{
+  position:fixed; inset:0; z-index:1; pointer-events:none;
+  background:
+    radial-gradient(ellipse at center, rgba(0,0,0,0) 48%, rgba(150,108,48,0.10) 76%, rgba(120,82,32,0.26) 100%);
+}
+
+#starCanvas{
+  position:fixed;
+  top: var(--my); left: var(--mx);
+  width: calc(100% - 2 * var(--mx));
+  height: calc(100% - 2 * var(--my));
+  z-index:2;
+  display:block;
+  pointer-events:none;
+  touch-action:none;
+}
+#starCanvas.ready{ pointer-events:auto; cursor:grab; }
+#starCanvas.ready.dragging{ cursor:grabbing; }
+
+.scene{
+  position:fixed; inset: var(--my) var(--mx); z-index:3;
+  pointer-events:none;
+}
+
+.noise-layer{
+  position:fixed; inset:0; z-index:4; pointer-events:none;
+  opacity:.06;
+  mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size:180px 180px;
+}
+
+.title-entry{ position:absolute; left:50%; translate:-50% 0; top:46%; text-align:left; display:flex; align-items:baseline; }
+.title-entry .work{
+  font-family:'Playfair Display', serif;
+  font-style:italic;
+  font-size:clamp(19px,5vw,28px);
+  white-space:nowrap;
+}
+.title-entry .year{
+  width:0; white-space:nowrap; transform:translateX(.6rem); /* hangs off the right so only the title is centred */
+  font-size:clamp(12px,3vw,15px);
+  letter-spacing:.24em;
+  color:var(--ink-soft);
+  transition:opacity .2s ease;
+}
+#entryCatcher{ opacity:0; transition:opacity .9s ease; }
+#entryCatcher.show{ opacity:1; }
+#entryNine{ opacity:0; }
+
+/* years get out of the way while the user is actively orbiting the camera */
+.story-entry .story-year,
+.sub-entry .year{ transition:opacity .2s ease; }
+body.orbiting .title-entry .year,
+body.orbiting .story-entry .story-year,
+body.orbiting .sub-entry .year{ opacity:0; }
+
+/* the 9 stories inside Nine Stories. The list starts 3vh below O and JS gives it the height
+   that ends exactly where the axis ends, so the 9 titles are spread over the axis length. */
+.story-works{
+  position:absolute; left:var(--left); top:calc(46% + 3vh);
+  display:flex; flex-direction:column; justify-content:space-between; align-items:flex-start; gap:.6vh;
+  padding-left:var(--axis-label-gap); /* the axis line runs along the list; keep the text off it */
+}
+.story-entry{
+  opacity:0;
+  will-change:opacity, transform; /* own GPU layer: don't rely on the parent 3D context to repaint on opacity-only changes (mobile) */
+  font-family:'Cormorant Garamond', serif;
+  font-style:italic;
+  font-size:clamp(11px,3vw,14px);
+  white-space:nowrap;
+}
+.story-entry .story-year{
+  margin-left:.6em;
+  font-size:.85em;
+  color:var(--ink-soft);
+  letter-spacing:.05em;
+}
+/* this line becomes the y-axis once it finishes rotating to horizontal */
+.story-axis-v{
+  position:absolute; left:var(--left); top:46%;
+  width:1px; height:20vh;
+  transform-origin:top left;
+  transform:scaleY(0) rotate(0deg);
+  will-change:opacity, transform;
+}
+
+/* Glass Saga's 6 works = story #1 (Bananafish, already on screen) + these 5. Same start and
+   same height as the story list; the first slot is an invisible spacer standing in for
+   story #1, so the 6 titles are spread over the axis length. These fade IN first; once the Z axis
+   starts extending, each row is wiped out (fades, drifting a little to the left) as the tip of the
+   line reaches it. Only when the line is done does the single "The Glass Saga" label come in */
+.sub-works{
+  position:absolute; left:var(--left); top:calc(46% + 3vh);
+  display:flex; flex-direction:column; justify-content:space-between; align-items:flex-start; gap:1vh;
+  padding-left:var(--axis-label-gap);
+}
+.sub-entry{
+  opacity:0;
+  will-change:opacity, transform; /* outside the 3D tree, but the WebGL canvas next to it causes the same missed repaint */
+  font-family:'Cormorant Garamond', serif;
+  font-style:italic;
+  font-size:clamp(12px,3.3vw,16px);
+  white-space:nowrap;
+}
+.sub-entry .year{
+  margin-left:.6em;
+  font-size:.85em;
+  color:var(--ink-soft);
+  letter-spacing:.05em;
+}
+
+.axis-v{
+  position:absolute; left:var(--left); top:46%;
+  width:1px; height:20vh;
+  transform-origin:top center;
+  transform:scaleY(0);
+  will-change:opacity, transform;
+}
+
+/* "The Glass Saga" — replaces the individual work titles once axis-v starts
+   extending. Font/size matched to the "Nine Stories" title-entry. Rotated
+   90deg so the line of text runs top-to-bottom. translate(-50%, -100%) runs
+   first (in the text's own frame): -50% centres it on the anchor along the axis,
+   -100% pushes it to the right of the axis (its bottom edge faces the axis,
+   axis-label-gap away — same as Nine Stories above the Y axis). */
+.glass-title{
+  position:absolute; left:calc(var(--left) + var(--axis-label-gap)); top:46%;
+  transform-origin:top left;
+  transform:rotate(90deg) translate(-50%, -100%);
+  font-family:'Playfair Display', serif;
+  font-style:italic;
+  font-size:clamp(19px,5vw,28px);
+  white-space:nowrap;
+  opacity:0;
+  will-change:opacity, transform;
+}
+
+/* --- orbit control: camera orbits around O — the point where the Y (Nine)
+   and Z (Glass) axes actually start (var(--left), 46%) — rather than an
+   abstract screen-center point. Y and Z both lie flat in that one plane;
+   X is the true depth axis, perpendicular to it, invisible, receding
+   through O. The Catcher/X axis stays outside orbit-scene — 2D, untouched
+   until the hidden X endpoint lines up with the starburst (see script). */
+.orbit-viewport{
+  position:absolute; inset:0;
+  perspective:1400px;
+  perspective-origin: var(--left) 46%;
+  pointer-events:none;
+  /* set in JS after the X hit: O glides to the centre of the scene (--shift-x/y),
+     and the whole picture shrinks about O if it would not fit (--fit) */
+  transform-origin: var(--left) 46%;
+  transform:translate(var(--shift-x, 0px), var(--shift-y, 0px)) scale(var(--fit, 1));
+  transition:transform 1.7s cubic-bezier(.65,0,.35,1);
+}
+.orbit-scene{
+  position:absolute; inset:0;
+  transform-style:preserve-3d;
+  transform-origin: var(--left) 46%;
+}
+/* the three axes as WebGL cylinders, from the X hit on (see the rig in the script). It lives inside
+   .orbit-viewport so it follows that element's own shift / shrink (--shift-x/y, --fit) for free. It is
+   NOT the size of the screen: O sits close to the left edge, so a screen-sized box would cut off the
+   part of X that points left of O. Instead it is a square centred on O, with room for any axis in any pose;
+   it comes before .orbit-scene, so the titles and letters are drawn over it. */
+.axes-gl{
+  position:absolute;
+  left:calc(var(--left) - var(--gl-e, 0px)); top:calc(46% - var(--gl-e, 0px));   /* a square centred on O ... */
+  width:calc(2 * var(--gl-e, 0px)); height:calc(2 * var(--gl-e, 0px));           /* ... --gl-e is its half-side (set in JS) */
+  display:block; pointer-events:none;
+  visibility:hidden;
+}
+.axis-group{
+  position:absolute; inset:0;
+  transform-style:preserve-3d;   /* the sheets of the axes inside must stay 3D */
+  pointer-events:none;
+}
+.axis-handle{ pointer-events:none; }
+
+/* Y and Z before the X hit are CSS lines, solid, not flat. Each line is three 1px sheets crossed along its length, 60deg
+   apart (the <i> children, added by JS), so there is no direction from which the line is edge-on and
+   vanishes; its width from any side stays between .87 and 1px, the same thin line as before.
+   The line itself carries no opacity (that would flatten the sheets): it sets --o and the sheets
+   fade with it; --o-t is the transition they use (empty = follow at once, as the scroll needs). */
+.story-axis-v, .axis-v{ transform-style:preserve-3d; }
+.story-axis-v > i, .axis-v > i{
+  position:absolute; inset:0;
+  background:var(--ink);
+  transform-origin:50% 50%;
+  opacity:var(--o, 0);
+  transition:opacity var(--o-t, 0s);
+}
+
+/* a single point, invisible, sitting behind O along the hidden X axis.
+   Rotates with the same camera as everything else in orbit-scene, so its
+   projected screen position genuinely sweeps through 3D as the user
+   orbits — no separate parallax math needed for this one point. */
+.x-endpoint{
+  position:absolute; left:var(--left); top:46%;
+  width:1px; height:1px;
+}
+
+/* the X axis has no CSS line: from the X hit on it is a WebGL cylinder like Y and Z (see the rig in the script) */
+
+.burst-wrap{
+  position:absolute; left:50%; top:46%;
+  translate:-50% 0; /* centred, under The Catcher; it never moves: the X axis is bent onto it (see bendXOntoBurst) */
+  transform:translateY(calc(-100% - var(--burst-lift)));
+  opacity:0;
+  pointer-events:auto;
+  cursor:pointer;
+  background:none; border:none; padding:0;
+  -webkit-tap-highlight-color:transparent;
+  transition:opacity 1s ease, transform 1s ease, translate .5s ease;
+}
+.burst-wrap svg{ width:var(--burst-size); height:auto; display:block; }
+.burst-wrap path{ fill:var(--ink); }
+.burst-wrap.enter{ opacity:1; }
+.burst-wrap.enter:active{ transform:translateY(calc(-100% - var(--burst-lift))) scale(.92); }
+.burst-wrap.opened{
+  opacity:1; transform:translateY(calc(-100% - var(--burst-lift))) scale(.35);   /* half of what it was (.7) */
+  pointer-events:none;
+}
+.burst-wrap.opened.x-hit{
+  opacity:0; transform:translateY(calc(-100% - var(--burst-lift))) scale(.25);
+  transition:opacity calc(1.1s * var(--hit-slow, 1)) ease, transform calc(1.1s * var(--hit-slow, 1)) ease, translate .5s ease;
+}
+
+/* everything that belongs to the three axes lives in .axes. After the X hit it turns over
+   180deg about the Y axis (--flip), so the Z axis, which hangs down while the page is 2D,
+   ends up pointing up (and X, which recedes, comes toward the viewer). */
+.axes{
+  position:absolute; inset:0;
+  transform-style:preserve-3d;
+  transform-origin: var(--left) 46%;
+  transform:rotateX(var(--flip, 0deg));
+  transition:transform 1.7s cubic-bezier(.65,0,.35,1);
+}
+
+/* At the X hit the existing titles (The Catcher / Nine Stories / The Glass Saga) move in here
+   and become the axis labels: fixed in 3D, each lying in a coordinate plane along its own axis
+   (X label in XZ, Y label in XY, Z label in YZ). Placed and oriented from JS (attachLabels /
+   layoutAxisLabels); they turn with the scene and never face the camera. Not flipped with .axes. */
+.labels3d{ position:absolute; inset:0; transform-style:preserve-3d; pointer-events:none; }
+.labels3d > *{ backface-visibility:hidden; } /* text is only readable from its front side */
+.labels3d .year{ opacity:0; }               /* the years go, the titles stay */
+
+/* finale: X / Y / Z stand just beyond the axis tips. The outer box is only a point that JS moves
+   along the axis (translate3d, kept in the same frame as the labels); the letter inside is turned
+   to face the camera every frame (opacity lives on the letter, so the outer box can stay preserve-3d) */
+.labels3d > .axis-letter{
+  position:absolute; left:var(--left); top:46%;
+  width:0; height:0;
+  transform-style:preserve-3d;
+  backface-visibility:visible;
+}
+.axis-letter > span{
+  position:absolute; left:0; top:0;
+  transform-origin:0 0;
+  font-family:'Playfair Display', serif;
+  font-style:italic;
+  line-height:1;
+  white-space:nowrap;
+  opacity:0;
+  backface-visibility:visible;
+}
+
+/* finale: the closing text, centred on the page. The halo in the background colour keeps
+   stars from running through the letters. */
+.finale{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%);
+  width:min(86vw,560px);
+  text-align:center;
+  pointer-events:none;
+}
+.finale p{
+  font-family:'Cormorant Garamond', serif;
+  font-style:italic;
+  font-size:clamp(17px,4.6vw,26px);
+  line-height:1.9;
+  color:var(--ink);
+  text-shadow:0 0 6px var(--paper), 0 0 16px var(--paper), 0 0 30px var(--paper);
+  opacity:0;
+  transform:translateY(10px);
+  transition:opacity 1.6s ease, transform 1.6s ease;
+}
+.finale p:nth-child(2){ transition-delay:1.1s; }
+.finale p.sign{
+  margin-top:1.4em;
+  font-style:normal;
+  font-size:clamp(12px,3.2vw,16px);
+  letter-spacing:.28em;
+  color:var(--ink-soft);
+  transition-delay:2.2s;
+}
+.finale.show p{ opacity:1; transform:none; }
+
+.question-slot{
+  /* same spot as the "scroll" hint (see .hint): the first question takes its place. The slot is a
+     zero-height line at that spot, and each question sits on it, growing upward if it wraps */
+  position:absolute; left:50%; bottom:3vh;
+  transform:translateX(-50%);
+  width:min(80vw,460px); height:0; text-align:center;
+}
+.question.gone{ opacity:0 !important; transition:opacity 1s ease; }   /* the camera note comes in, in the same spot */
+.question{
+  position:absolute; left:0; right:0; bottom:0;
+  font-family:'Cormorant Garamond', serif;
+  font-style:italic;
+  font-size:clamp(16px,4.2vw,22px);
+  line-height:1.8;
+  opacity:0;
+}
+
+.hat-note{
+  position:absolute; left:50%; bottom:5vh;
+  transform:translateX(-50%);
+  width:min(80vw,460px); text-align:center;
+  font-family:'Cormorant Garamond', serif;
+  font-style:italic;
+  font-size:clamp(15px,3.6vw,20px);
+  line-height:1.7;
+  opacity:0; transition:opacity 1s ease;
+}
+.hat-note.show{ opacity:1; }
+
+.hint{
+  position:absolute; left:50%; bottom:3vh;
+  transform:translateX(-50%);
+  font-size:11px; letter-spacing:.3em; color:var(--ink-soft);
+  opacity:0; transition:opacity .5s ease; /* set from JS: shown at the very start only, gone once the first question takes over */
+}
+</style>
+</head>
+<body class="locked">
+
+<div class="track"></div>
+<div class="pages" id="pages" aria-hidden="true"></div>
+<div class="vignette-layer"></div>
+<canvas id="starCanvas"></canvas>
+<div class="scene">
+  <button class="burst-wrap" id="burst" aria-label="start">
+    <!-- the supplied starburst, traced to a single closed path (4 mirrored quadrants of cubic curves).
+         Its centre is the centre of the viewBox: the X hit is measured from the middle of this box. -->
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M50 4 C50.18 5.08 50.18 6.21 50.25 7.3 C50.35 9.11 50.51 10.91 50.62 12.72 C50.99 18.96 51.51 25.25 52.42 31.43 C53.22 36.91 54.89 42.58 60.18 45.39 C61.28 45.97 62.44 46.58 63.67 46.86 C70.92 48.48 78.36 48.94 85.77 49.52 C87.84 49.69 90.24 49.63 92.21 50 C90.24 50.37 87.84 50.31 85.77 50.48 C78.36 51.06 70.92 51.52 63.67 53.14 C62.44 53.42 61.28 54.03 60.18 54.61 C54.89 57.42 53.22 63.09 52.42 68.57 C51.51 74.75 50.99 81.04 50.62 87.28 C50.51 89.09 50.35 90.89 50.25 92.7 C50.18 93.79 50.18 94.92 50 96 C49.82 94.92 49.82 93.79 49.75 92.7 C49.65 90.89 49.49 89.09 49.38 87.28 C49.01 81.04 48.49 74.75 47.58 68.57 C46.78 63.09 45.11 57.42 39.82 54.61 C38.72 54.03 37.56 53.42 36.33 53.14 C29.08 51.52 21.64 51.06 14.23 50.48 C12.16 50.31 9.76 50.37 7.79 50 C9.76 49.63 12.16 49.69 14.23 49.52 C21.64 48.94 29.08 48.48 36.33 46.86 C37.56 46.58 38.72 45.97 39.82 45.39 C45.11 42.58 46.78 36.91 47.58 31.43 C48.49 25.25 49.01 18.96 49.38 12.72 C49.49 10.91 49.65 9.11 49.75 7.3 C49.82 6.21 49.82 5.08 50 4Z"/>
+    </svg>
+  </button>
+
+  <div class="title-entry" id="entryCatcher">
+    <div class="work">The Catcher in the Rye</div>
+    <div class="year">1951</div>
+  </div>
+
+  <div class="orbit-viewport" id="orbitViewport">
+    <canvas class="axes-gl" id="axesCanvas" aria-hidden="true"></canvas>
+    <div class="orbit-scene" id="orbitScene">
+     <div class="axes" id="axes">
+      <div class="axis-group" id="yAxisGroup">
+        <div class="title-entry axis-handle" id="entryNine">
+          <div class="work">Nine Stories</div>
+          <div class="year">1953</div>
+        </div>
+
+        <div class="story-works axis-handle" id="storyWorks">
+          <div class="story-entry" id="story1">A Perfect Day for Bananafish<span class="story-year">1948</span></div>
+          <div class="story-entry" id="story2">Uncle Wiggily in Connecticut</div>
+          <div class="story-entry" id="story3">Just Before the War with the Eskimos</div>
+          <div class="story-entry" id="story4">The Laughing Man</div>
+          <div class="story-entry" id="story5">Down at the Dinghy</div>
+          <div class="story-entry" id="story6">For Esmé — with Love and Squalor</div>
+          <div class="story-entry" id="story7">Pretty Mouth and Green My Eyes</div>
+          <div class="story-entry" id="story8">De Daumier-Smith's Blue Period</div>
+          <div class="story-entry" id="story9">Teddy</div>
+        </div>
+        <div class="story-axis-v axis-handle" id="storyAxisV"></div>
+      </div>
+
+      <div class="axis-group" id="zAxisGroup">
+        <div class="glass-title axis-handle" id="glassTitle">The Glass Saga</div>
+        <div class="axis-v axis-handle" id="axisV"></div>
+      </div>
+
+      <div class="x-endpoint" id="xEndpoint"></div>
+     </div>
+     <div class="labels3d" id="labels3d">
+      <div class="axis-letter" id="letterX" aria-hidden="true"><span>X</span></div>
+      <div class="axis-letter" id="letterY" aria-hidden="true"><span>Y</span></div>
+      <div class="axis-letter" id="letterZ" aria-hidden="true"><span>Z</span></div>
+     </div>
+    </div>
+  </div>
+
+  <div class="sub-works" id="subWorks">
+    <div class="sub-entry" aria-hidden="true" style="visibility:hidden">&nbsp;</div>
+    <div class="sub-entry" id="sub1"><span class="work">Franny</span><span class="year">1955</span></div>
+    <div class="sub-entry" id="sub2"><span class="work">Raise High the Roof Beam, Carpenters</span><span class="year">1955</span></div>
+    <div class="sub-entry" id="sub3"><span class="work">Zooey</span><span class="year">1957</span></div>
+    <div class="sub-entry" id="sub4"><span class="work">Seymour: an Introduction</span><span class="year">1959</span></div>
+    <div class="sub-entry" id="sub5"><span class="work">Hapworth 16, 1924</span><span class="year">1965</span></div>
+  </div>
+
+  <div class="question-slot">
+    <p class="question" id="q1">Why is his time stopped?</p>
+    <p class="question" id="q2">Why did he shoot himself?</p>
+    <p class="question" id="q3">Why is that shot the beginning?</p>
+  </div>
+
+  <p class="hat-note" id="hatNote">&ldquo;This is a people shooting hat.&rdquo;<br>Is that a joke?</p>
+
+  <div class="hint" id="hint">scroll</div>
+
+  <div class="finale" id="finale">
+    <p>The Universe is too large for this scope.</p>
+    <p>Come back with a larger screen.</p>
+    <p class="sign">― Metaphony</p>
+  </div>
+</div>
+<div class="noise-layer"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+window.scrollTo(0, 0);          // (see the script in <head>) the story always starts at the burst
+window.addEventListener('load', () => { if (!document.body.classList.contains('opened-once')) window.scrollTo(0, 0); });
+
+const starCanvas = document.getElementById('starCanvas');
+const STAR_COUNT = 500;
+
+const renderer = new THREE.WebGLRenderer({ canvas: starCanvas, alpha: true, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+const threeScene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 1, 3000);
+camera.position.set(0, 0, 700);
+
+// round "period" sprite for the stars (plain square points look pixelated/blocky)
+function makeCircleTexture(){
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const starGeo = new THREE.BufferGeometry();
+const starPos = new Float32Array(STAR_COUNT * 3);
+// Stars sit on one of 9 "lines" (like lines of text in a book) until the camera
+// turns. y is scaled by each star's distance from the camera, so the row stays
+// the same on screen whatever the star's depth — flat 2D reads as ruled lines.
+const STAR_ROWS = 9;
+const ROW_GAP = 0.2; // in NDC: rows at -0.8 … +0.8 of the canvas height
+const HALF_FOV_TAN = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+for (let i = 0; i < STAR_COUNT; i++) {
+  const z = (Math.random() - 0.5) * 900;             // real depth — near and far stars both exist
+  const row = Math.floor(Math.random() * STAR_ROWS); // 0 … 8
+  starPos[i * 3 + 0] = (Math.random() - 0.5) * 1400; // scattered across the frame
+  starPos[i * 3 + 1] = (row - (STAR_ROWS - 1) / 2) * ROW_GAP * (camera.position.z - z) * HALF_FOV_TAN;
+  starPos[i * 3 + 2] = z;
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+// per-star alpha (rgb stays 1: the material colour tints): stars are added one after another with the
+// scroll, from the very first pixel on (see updateStars), each fading in over a few stars' worth of scroll
+const starAlpha = new Float32Array(STAR_COUNT * 4).fill(1);
+for (let i = 0; i < STAR_COUNT; i++) starAlpha[i * 4 + 3] = 0;
+starGeo.setAttribute('color', new THREE.BufferAttribute(starAlpha, 4));
+const STAR_FADE = 6;
+function updateStars(t){          // t: 0 … 1 = how far the scroll timeline has come
+  const front = t * (STAR_COUNT + STAR_FADE);
+  for (let i = 0; i < STAR_COUNT; i++) starAlpha[i * 4 + 3] = clamp((front - i) / STAR_FADE, 0, 1);
+  starGeo.attributes.color.needsUpdate = true;
+}
+const STAR_SIZE_FLAT = 1.8; // px, uniform dots while nothing is turning (no perspective, so they read as the biggest thing in the background: kept small)
+const STAR_SIZE_ORBIT = 5; // base size once the camera turns (shrinks/grows with distance)
+const starMat = new THREE.PointsMaterial({
+  color: 0x14120f,
+  map: makeCircleTexture(),
+  size: STAR_SIZE_FLAT,
+  sizeAttenuation: false, // flat, uniform "period" dots until the camera actually turns
+  transparent: true,
+  vertexColors: true,     // 4 components: the alpha above
+  alphaTest: 0.05,        // (was 0.3: with a slow fade that hid every star until the opacity passed it, then all popped in at once)
+  opacity: 0.5,
+  depthWrite: false,
+});
+const starField = new THREE.Points(starGeo, starMat);
+threeScene.add(starField);
+
+function resizeThree(){
+  const rect = starCanvas.getBoundingClientRect();
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(rect.width, rect.height);
+}
+resizeThree();
+window.addEventListener('resize', resizeThree);
+
+const burst = document.getElementById('burst');
+const entryCatcher = document.getElementById('entryCatcher');
+const entryNine = document.getElementById('entryNine');
+const hint = document.getElementById('hint');
+const q1 = document.getElementById('q1');
+const q2 = document.getElementById('q2');
+const q3 = document.getElementById('q3');
+const hatNote = document.getElementById('hatNote');
+const stories = [1,2,3,4,5,6,7,8,9].map(i => document.getElementById('story' + i));
+const storyAxisV = document.getElementById('storyAxisV');
+const subs = [
+  document.getElementById('sub1'),
+  document.getElementById('sub2'),
+  document.getElementById('sub3'),
+  document.getElementById('sub4'),
+  document.getElementById('sub5'),
+];
+const subWorks = document.getElementById('subWorks');
+const glassTitle = document.getElementById('glassTitle');
+const storyWorks = document.getElementById('storyWorks');
+const axisV = document.getElementById('axisV');
+const yAxisGroup = document.getElementById('yAxisGroup');
+const zAxisGroup = document.getElementById('zAxisGroup');
+const orbitScene = document.getElementById('orbitScene');
+const xEndpoint = document.getElementById('xEndpoint');
+// the three axes are solid: three crossed 1px sheets per line (see the CSS)
+for (const el of [storyAxisV, axisV]) for (const deg of [0, 60, 120]) {
+  const sheet = document.createElement('i');
+  sheet.style.transform = `rotateY(${deg}deg)`;
+  el.appendChild(sheet);
+}
+const labels3d = document.getElementById('labels3d');
+const root = document.documentElement;
+
+
+let axisH = 0, axisLeft = 0; // axis length and O's x (px), set in measureAxisLength
+let storyStep = 0;           // px between two neighbouring stories (a merge moves a title up by this much)
+let glassRows = [0.1, 0.3, 0.5, 0.7, 0.85, 0.95]; // how far along the Z axis (fraction of its length) each of the Glass Saga's 6 rows lies
+let composed = false;        // true once O has moved to the centre of the scene
+let sequenceStarted = false; // true from the X hit on: scroll-driven animation is frozen
+let endArmed = false;        // true once the home position is reached: scrolling back up may now start the finale
+let ending = false;          // true from the first reverse scroll on
+let billboardOn = false;     // X / Y / Z face the camera while this is set
+const finale = document.getElementById('finale');
+
+/* --- axis labels in 3D ------------------------------------------------------
+   Home position (after the X hit): Z points up, X to the lower left, Y to the lower right.
+   Vectors below are in that final frame (CSS axes: x right, y down, z toward viewer),
+   relative to O. The axes (.axes) are turned over by rotateX(180deg) to get there; the labels
+   live in .labels3d, which is not flipped, so they are placed directly in the final frame. */
+const HOME_YAW = 45, HOME_PITCH = 35; // degrees; the camera pose of the home position
+const DEG = Math.PI / 180;
+const AX = { x: [0, 0, 1], y: [1, 0, 0], z: [0, -1, 0] };
+const neg = a => a.map(v => -v);
+const scl = (a, k) => a.map(v => v * k);
+const add = (...vs) => vs[0].map((_, i) => vs.reduce((t, v) => t + v[i], 0));
+const cross = (a, b) => [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]];
+const easeInOut = t => (t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+// r: reading direction, u: glyph-up direction (both chosen so the text reads left-to-right and
+// upright from the home view), side: which side of its axis the text sits on — always the side
+// facing the neighbouring axis in the label's plane, i.e. inside the positive quadrant.
+const AXIS_LABELS = [
+  { el: entryCatcher, txt: entryCatcher.querySelector('.work'), axis: AX.x, r: neg(AX.x), u: AX.z,      side: AX.z }, // XZ plane, above the X axis
+  { el: entryNine,    txt: entryNine.querySelector('.work'),    axis: AX.y, r: AX.y,      u: neg(AX.x), side: AX.x }, // XY plane, on the +X side of Y
+  { el: glassTitle,   txt: glassTitle,                          axis: AX.z, r: AX.z,      u: neg(AX.y), side: AX.y }, // YZ plane, on the +Y side of Z, reads upward
+];
+
+// finale: X / Y / Z, one beyond each axis tip, in the same frame as the labels above
+const END_GAP = 0.06, END_FS = 0.09; // × axis length: how far the letter's centre sits past the tip / its font size
+const END_LETTERS = [['X', AX.x], ['Y', AX.y], ['Z', AX.z]].map(([ch, dir]) => {
+  const el = document.getElementById('letter' + ch);
+  return { ch, dir, el, tx: el.firstElementChild };
+});
+// s = 1: at the axis tips, s = 0: collapsed onto O (the gap stays, so the three letters still read apart)
+function placeEndLetters(h, s){
+  const d = s * h + h * END_GAP;
+  for (const L of END_LETTERS) {
+    L.el.style.transform = `translate3d(${L.dir[0] * d}px, ${L.dir[1] * d}px, ${L.dir[2] * d}px)`;
+    L.tx.style.fontSize = h * END_FS + 'px';
+  }
+}
+
+// Once a title is attached (see attachLabels) this sets its matrix3d; always returns the corner
+// points (final frame) for the fit. The titles shrink to h*0.065 px text on the way.
+function layoutAxisLabels(h){
+  const labelFs = h * 0.065;
+  const pts = [[0, 0, 0], scl(AX.x, h), scl(AX.y, h), scl(AX.z, h)];
+  const gap = h * 0.035;
+  for (const L of AXIS_LABELS) {
+    const k = labelFs / parseFloat(getComputedStyle(L.txt).fontSize);
+    const W = L.el.offsetWidth * k, H = L.el.offsetHeight * k;
+    const down = neg(L.u);                                       // local y
+    const front = cross(L.r, down);                              // local z (the readable side)
+    const c = add(scl(L.axis, h / 2), scl(L.side, gap + H / 2)); // centred along the axis
+    const p0 = add(c, scl(L.r, -W / 2), scl(L.u, H / 2));        // top-left corner of the text
+    if (L.attached) L.el.style.transform = `matrix3d(${scl(L.r, k)},0,${scl(down, k)},0,${front},0,${p0},1)`;
+    for (const i of [0, 1]) for (const j of [0, 1]) pts.push(add(p0, scl(L.r, i * W), scl(down, j * H)));
+  }
+  return pts;
+}
+
+// where a point (final frame, relative to O) lands on screen at the home pose — same maths as the CSS chain
+function homeProject(p){
+  const a = -HOME_PITCH * DEG, b = -HOME_YAW * DEG;
+  const x1 = p[0] * Math.cos(b) + p[2] * Math.sin(b), z1 = -p[0] * Math.sin(b) + p[2] * Math.cos(b);
+  const y2 = p[1] * Math.cos(a) - z1 * Math.sin(a),   z2 = p[1] * Math.sin(a) + z1 * Math.cos(a);
+  const k = 1400 / (1400 - z2);
+  return [x1 * k, y2 * k];
+}
+
+/* --- the three axes as WebGL cylinders (from the X hit on) ---------------------------------------
+   Until the X hit, Y and Z are the CSS lines above (that is the phase in which the camera can be
+   turned). At the hit all three become real cylinders, drawn by a second three.js renderer on
+   #axesCanvas. The canvas sits inside .orbit-viewport, so the viewport's own shift / shrink
+   (--shift-x/y, --fit) carries it along. Its camera is the CSS one rebuilt: perspective 1400px about
+   O (an off-centre frustum, so that O is the principal point), and the cylinders go through the chain
+   the CSS lines were in: rotateX(flip) [.axes], then rotateX(-pitch) rotateY(-yaw) [.orbit-scene].
+   CSS is y-down, this world is y-up, so every CSS matrix M is used as F·M·F with F = scale(1,-1,1).
+   What the CSS transitions animated (the flip, X being drawn, the bend of X relaxing, the finale's
+   shortening) is run from JS here, with the same easing curves. */
+const HIT_SLOW = 2;                            // the X-hit scene (X drawn to O, titles merge, turn over, home) runs this many times slower
+document.documentElement.style.setProperty('--hit-slow', HIT_SLOW);
+const GL_D = 1400;                             // = perspective of .orbit-viewport
+const AXIS_R = 0.5, AXIS_A = 0.8;              // radius (a 1px line, as before) and opacity of the cylinders
+const INK_C = new THREE.Color(0x14120f), PAPER_C = new THREE.Color(0xf4f1ea);
+
+function cubicBezier(x1, y1, x2, y2){          // the CSS timing function, solved by bisection
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const X = t => ((ax * t + bx) * t + cx) * t, Y = t => ((ay * t + by) * t + cy) * t;
+  return x => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let lo = 0, hi = 1, t = x;
+    for (let i = 0; i < 24; i++) { if (X(t) < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+    return Y(t);
+  };
+}
+const EASE_HOME = cubicBezier(.65, 0, .35, 1); // the home move and the finale
+const EASE_CSS = cubicBezier(.25, .1, .25, 1); // CSS "ease"
+
+const axesCanvas = document.getElementById('axesCanvas');
+const glr = new THREE.WebGLRenderer({ canvas: axesCanvas, alpha: true, antialias: true });
+glr.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+glr.setClearColor(0x000000, 0);
+const glScene = new THREE.Scene();
+const glCam = new THREE.PerspectiveCamera();
+glCam.position.set(0, 0, GL_D);
+const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 12, 1);   // unit radius and height, scaled per axis
+const rigMat = [0, 1, 2].map(() => new THREE.MeshBasicMaterial({ color: INK_C.clone(), transparent: true, opacity: 0, depthWrite: false }));
+const rigMesh = rigMat.map(m => { const o = new THREE.Mesh(cylGeo, m); glScene.add(o); return o; });   // Y, Z, X
+glr.compile(glScene, glCam);                   // shaders ready before the hit
+
+const rig = {
+  on: false, dirty: true,
+  flip: 0,          // deg, the turn-over about the Y axis after the hit (.axes' --flip)
+  bent: null,       // where the X tip was put at the hit (frame before the flip, px from O), or null
+  relax: 1,         // 0 = tip on the bent spot ... 1 = straight depth axis
+  grow: 0,          // X is drawn from its tip toward O
+  conv: 1,          // 1 = full length ... 0 = collapsed onto O (finale)
+  fade: 1,          // finale: all three fade out
+  a: [0, 0, 0],     // fade-in of Y, Z, X
+};
+let camYaw = 0, camPitch = 0;                  // the camera, as syncCssCamera sees it
+let rigYaw = NaN, rigPitch = NaN;
+const mF = new THREE.Matrix4().makeScale(1, -1, 1);
+const mA = new THREE.Matrix4(), mB = new THREE.Matrix4(), mC = new THREE.Matrix4(), mW = new THREE.Matrix4();
+const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vD = new THREE.Vector3(), V_UP = new THREE.Vector3(0, 1, 0);
+const setRx = (m, deg) => { const t = deg * DEG, c = Math.cos(t), s = Math.sin(t); return m.set(1,0,0,0, 0,c,-s,0, 0,s,c,0, 0,0,0,1); };   // CSS rotateX
+const setRy = (m, deg) => { const t = deg * DEG, c = Math.cos(t), s = Math.sin(t); return m.set(c,0,s,0, 0,1,0,0, -s,0,c,0, 0,0,0,1); };   // CSS rotateY
+
+// half-side of the canvas: the farthest an axis of length h can reach from O on screen, in any camera pose,
+// is a little over h (perspective adds a bit as it grows); checked against 200k random poses
+const glHalf = h => Math.ceil(h * (1.05 + 0.5 * h / GL_D) + 6);
+function projectRig(){
+  root.style.setProperty('--gl-e', glHalf(axisH) + 'px');
+  const W = axesCanvas.clientWidth, H = axesCanvas.clientHeight;
+  if (!W || !H) return;
+  const n = 100, f = 5000, ox = W / 2, oy = H / 2;                       // O is the centre of the canvas
+  glCam.projectionMatrix.makePerspective(-ox / GL_D * n, (W - ox) / GL_D * n, oy / GL_D * n, -(H - oy) / GL_D * n, n, f);
+  glCam.projectionMatrixInverse.copy(glCam.projectionMatrix).invert();
+  rig.dirty = true;
+}
+function resizeRig(){
+  const W = axesCanvas.clientWidth, H = axesCanvas.clientHeight;
+  if (!W || !H) return;
+  glr.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2, 1500 / Math.max(W, H)));   // the box is big: cap the buffer (~1500px a side)
+  glr.setSize(W, H, false);                                              // the CSS sets the box
+  projectRig();
+}
+new ResizeObserver(resizeRig).observe(axesCanvas);
+
+// one cylinder from A to B (CSS frame, y down, px from O)
+function placeSeg(mesh, ax, ay, az, bx, by, bz){
+  vA.set(ax, -ay, az).applyMatrix4(mW);
+  vB.set(bx, -by, bz).applyMatrix4(mW);
+  vD.subVectors(vB, vA);
+  const len = vD.length();
+  mesh.visible = len > 0.01;
+  if (!mesh.visible) return;
+  mesh.position.addVectors(vA, vB).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(V_UP, vD.multiplyScalar(1 / len));
+  mesh.scale.set(AXIS_R, len, AXIS_R);
+}
+
+// drawn only while something changed (the camera turned, or a tween ran)
+function updateRig(){
+  if (!rig.on) return;
+  if (!rig.dirty && camYaw === rigYaw && camPitch === rigPitch) return;
+  rigYaw = camYaw; rigPitch = camPitch; rig.dirty = false;
+  setRx(mA, -camPitch); setRy(mB, -camYaw); setRx(mC, rig.flip);
+  mW.copy(mF).multiply(mA).multiply(mB).multiply(mC).multiply(mF);
+  const h = axisH, s = rig.conv;
+  placeSeg(rigMesh[0], 0, 0, 0, h * s, 0, 0);                            // Y: along +x before the flip
+  placeSeg(rigMesh[1], 0, 0, 0, 0, h * s, 0);                            // Z: down before the flip (up after it)
+  const b = rig.bent || [0, 0, -h], r = rig.relax;                       // X: depth axis, tip bent -> straight
+  const tx = b[0] * (1 - r) * s, ty = b[1] * (1 - r) * s, tz = (b[2] * (1 - r) - h * r) * s;
+  const k = 1 - rig.grow;                                                // drawn from the tip toward O
+  placeSeg(rigMesh[2], tx, ty, tz, tx * k, ty * k, tz * k);
+  for (let i = 0; i < 3; i++) rigMat[i].opacity = AXIS_A * rig.a[i] * rig.fade;
+  glr.render(glScene, glCam);
+}
+
+// the X hit: Y and Z hand over from the CSS lines (a short cross-fade, the camera is frozen), X is
+// drawn from the starburst
+function rigStart(){
+  rig.on = true; rig.dirty = true;
+  axesCanvas.style.visibility = 'visible';
+  for (const el of [storyAxisV, axisV]) { el.style.setProperty('--o-t', '300ms ease'); el.style.setProperty('--o', '0'); }
+  tween(300, p => { rig.a[0] = rig.a[1] = p; rig.dirty = true; }, EASE_CSS);
+  tween(1400 * HIT_SLOW, p => { rig.grow = p; rig.a[2] = p; rig.dirty = true; }, EASE_CSS);
+}
+
+function measureAxisLength(){
+  // axis length: 1.5x the height the 9 titles would need packed together, shared by all three axes (X included)
+  const natural = stories.reduce((t, el) => t + el.offsetHeight, 0) + (stories.length - 1) * window.innerHeight * 0.006;
+  const h = natural * 1.5;
+  // both lists start 3vh below O and end where the axis ends
+  const listH = h - window.innerHeight * 0.03;
+  storyWorks.style.height = listH + 'px';
+  subWorks.style.height = listH + 'px';
+  storyStep = stories[1].offsetTop - stories[0].offsetTop;
+  // where the growing Z axis reaches the row of each of the Glass Saga's 6 works (fraction of the axis
+  // length). The Glass list's first row is the invisible spacer standing in for Bananafish.
+  glassRows = Array.from(subWorks.children).map(el => (window.innerHeight * 0.03 + el.offsetTop + el.offsetHeight / 2) / h);
+  storyAxisV.style.height = h + 'px';
+  axisV.style.height = h + 'px';
+  xEndpoint.style.transform = `translateZ(${-h}px)`;  // tip of X (depth)
+  root.style.setProperty('--axis-h', h + 'px');
+  if (!ending) placeEndLetters(h, 1);
+  const pts = layoutAxisLabels(h);
+
+  // O sits h/2 left of centre, so the Y axis (horizontal once rotated) is centred on screen
+  const sceneW = document.querySelector('.scene').clientWidth;
+  const sceneH = document.querySelector('.scene').clientHeight;
+  const left = Math.max(0, (sceneW - h) / 2);
+  root.style.setProperty('--left', left + 'px');
+  axisH = h; axisLeft = left;
+  // once composed, O (left, 46%) sits at the centre of the scene — the same point the star camera orbits
+  root.style.setProperty('--shift-x', composed ? (sceneW / 2 - left) + 'px' : '0px');
+  root.style.setProperty('--shift-y', composed ? (sceneH * 0.04) + 'px' : '0px');
+  // at the home pose everything (axes + labels) must fit the scene: shrink about O if not
+  let fit = 1;
+  if (composed) {
+    const M = 20; // px kept clear of the scene edge
+    const ext = pts.map(homeProject).reduce((e, q) => [Math.max(e[0], Math.abs(q[0])), Math.max(e[1], Math.abs(q[1]))], [0, 0]);
+    fit = Math.min(1, (sceneW / 2 - M) / ext[0], (sceneH / 2 - M) / ext[1]);
+  }
+  root.style.setProperty('--fit', fit);
+  projectRig();                                   // O's x changed: the WebGL axes' frustum follows
+
+  if (!AXIS_LABELS[0].attached) {   // afterwards the titles are positioned by matrix (layoutAxisLabels)
+    const half = h / 2;
+    entryNine.style.left = `calc(var(--left) + ${half}px)`; // = axis midpoint (centre of the Y axis)
+    glassTitle.style.top = `calc(46% + ${half}px)`;
+  }
+}
+measureAxisLength();
+window.addEventListener('load', measureAxisLength);
+window.addEventListener('resize', measureAxisLength);
+if (document.fonts) document.fonts.ready.then(measureAxisLength); // label sizes depend on the web fonts
+
+/* --- orbit control: three.js's OrbitControls drives the camera around
+   the star field (real WebGL depth + size attenuation). Every frame we
+   read the camera's angle around the target and apply the equivalent
+   rotation to the CSS orbit-scene, so the flat Y/Z/X "axes" swing in
+   lockstep with the star camera — one shared orbit, two renderers. */
+let yReady = false, zReady = false;
+let xRevealed = false;
+const X_HIT_RADIUS = 26; // px, how close the endpoint must swing to the starburst
+
+const controls = new OrbitControls(camera, starCanvas);
+controls.target.set(0, 0, 0);
+controls.enablePan = false;
+controls.enableZoom = false;
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.6;
+controls.minPolarAngle = THREE.MathUtils.degToRad(5);   // matches the old ±85° pitch clamp
+controls.maxPolarAngle = THREE.MathUtils.degToRad(175);
+controls.enabled = false;
+controls.update();
+
+controls.addEventListener('start', () => {
+  starCanvas.classList.add('dragging');
+  document.body.classList.add('orbiting');
+  if (!document.body.classList.contains('expanded')) {
+    // the inner margin around the stars/titles (--mx/--my) was only there for before the camera
+    // could be turned; once it has been, it is no longer needed and collapses to the paper page's
+    // own edge (body.expanded), for the rest of the scene.
+    document.body.classList.add('expanded');
+    setTimeout(() => { resizeThree(); measureAxisLength(); }, 650);   // after --mx/--my finish collapsing (.6s)
+  }
+  starMat.sizeAttenuation = true;
+  starMat.size = STAR_SIZE_ORBIT;
+  starMat.needsUpdate = true;
+});
+controls.addEventListener('end', () => {
+  starCanvas.classList.remove('dragging');
+  document.body.classList.remove('orbiting');
+  starMat.sizeAttenuation = false;
+  starMat.size = STAR_SIZE_FLAT;
+  starMat.needsUpdate = true;
+});
+
+function orbitReady(){ return yReady && zReady; }
+
+function updateReadyClasses(){
+  const ready = orbitReady();
+  controls.enabled = ready;
+  starCanvas.classList.toggle('ready', ready);
+  // while the camera can be turned (until the X axis is found) the note replaces the scroll hint
+  hatNote.classList.toggle('show', ready);
+  q3.classList.toggle('gone', ready);            // the camera note takes q3's place
+}
+
+const camOffset = new THREE.Vector3();
+const camSpherical = new THREE.Spherical();
+
+function syncCssCamera(){
+  camOffset.copy(camera.position).sub(controls.target);
+  camSpherical.setFromVector3(camOffset);
+  const yawDeg = THREE.MathUtils.radToDeg(camSpherical.theta);
+  const pitchDeg = 90 - THREE.MathUtils.radToDeg(camSpherical.phi);
+  camYaw = yawDeg; camPitch = pitchDeg;
+  // camera above (pitchDeg > 0) tilts the scene the way the star field tilts: rotateX takes -pitch
+  orbitScene.style.transform = `rotateX(${-pitchDeg}deg) rotateY(${-yawDeg}deg)`;
+  if (billboardOn) applyBillboard(yawDeg, pitchDeg);
+}
+
+// the inverse of the camera turn above, so a flat letter keeps facing the viewer
+function applyBillboard(yawDeg, pitchDeg){
+  const t = `rotateY(${yawDeg}deg) rotateX(${pitchDeg}deg) translate(-50%, -50%)`;
+  for (const L of END_LETTERS) L.tx.style.transform = t;
+}
+
+function checkXReveal(){
+  if (xRevealed || !controls.enabled) return;   // X can't be found before the camera is orbitable
+                                                   // (orbitReady): skip the layout reads below for the
+                                                   // whole 9-stories/Glass-Saga scroll, where they were
+                                                   // being forced every frame for nothing and, colliding
+                                                   // with onScroll's style writes, could stall a fast
+                                                   // mobile fling (classic layout-thrashing pattern)
+  const p = xEndpoint.getBoundingClientRect();
+  const b = burst.getBoundingClientRect();
+  const dx = (p.left + p.width / 2) - (b.left + b.width / 2);
+  const dy = (p.top + p.height / 2) - (b.top + b.height / 2);
+  if (Math.hypot(dx, dy) < X_HIT_RADIUS) onXHit();
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const frames = n => new Promise(r => { const f = () => (--n <= 0 ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); });
+
+/* --- labelling: the existing titles are reused. Each one is moved into .labels3d looking exactly
+   as it does now (start), and glides to its place along its axis (target, set by layoutAxisLabels).
+   Nine Stories and The Glass Saga already sit in the axes' plane; The Catcher is a flat screen
+   element, so it gets the inverse of the camera turn to look unchanged. */
+function attachLabels(){
+  const scene = document.querySelector('.scene').getBoundingClientRect();
+  const ox = scene.left + axisLeft, oy = scene.top + scene.height * 0.46;
+  const yaw = THREE.MathUtils.radToDeg(camSpherical.theta), pitch = 90 - THREE.MathUtils.radToDeg(camSpherical.phi);
+  const gapPx = window.innerHeight * 0.018, half = axisH / 2;    // gapPx = --axis-label-gap
+  for (const L of AXIS_LABELS) {
+    const el = L.el, W = el.offsetWidth, H = el.offsetHeight;
+    let start;
+    if (el === entryCatcher) {
+      const r = el.getBoundingClientRect();
+      start = `rotateY(${yaw}deg) rotateX(${pitch}deg) translate(${r.left - ox}px, ${r.top - oy}px)`;
+    } else if (el === entryNine) {                                // above the middle of the axis
+      start = `translate(${half - W / 2}px, ${-H - gapPx}px)`;
+    } else {                                                      // turned 90deg, right of the Z axis, centred
+      start = `translate(${gapPx + H}px, ${half - W / 2}px) rotate(90deg)`;
+    }
+    labels3d.appendChild(el);
+    el.style.translate = 'none';
+    el.style.left = 'var(--left)';
+    el.style.top = '46%';
+    el.style.transformOrigin = '0 0';
+    el.style.transition = 'none';
+    el.style.transform = start;
+    L.attached = true;
+  }
+  void labels3d.offsetWidth; // commit the start state before the transition is switched on
+  for (const L of AXIS_LABELS) L.el.style.transition = `transform ${1.7 * HIT_SLOW}s cubic-bezier(.65,0,.35,1)`;
+}
+
+/* --- camera tween to the home pose (the star field and the CSS axes both follow the camera) */
+let camTween = null;
+function goPose(yawDeg, pitchDeg, ms){
+  const s = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+  let dTheta = yawDeg * DEG - s.theta;
+  dTheta = Math.atan2(Math.sin(dTheta), Math.cos(dTheta)); // the short way round
+  camTween = { t0: performance.now(), ms, s, dTheta, toPhi: (90 - pitchDeg) * DEG };
+}
+const goHome = ms => goPose(HOME_YAW, HOME_PITCH, ms);
+function stepCamTween(now){
+  if (!camTween) return;
+  const T = camTween, p = easeInOut(clamp((now - T.t0) / T.ms, 0, 1));
+  camera.position.setFromSpherical(new THREE.Spherical(T.s.radius, T.s.phi + (T.toPhi - T.s.phi) * p, T.s.theta + T.dTheta * p)).add(controls.target);
+  if (p >= 1) camTween = null;
+}
+
+/* --- X hit: lock → starburst snaps onto the X tip → line drawn tip → O → starburst out,
+   labels + home position (O to the centre, axes turn over, camera to the home pose) → unlock */
+/* The X hit lands the axis on the starburst instead of pulling the starburst onto the axis, so the
+   starburst never moves. The tip of X is shifted sideways (in the plane facing the camera, so its
+   depth stays) until it projects exactly onto the centre of the starburst: at most a few degrees
+   of bend. The line is then drawn from the starburst to O, and relaxX() lets the bend go again
+   while the camera turns home, where nobody can see it. The projection is the browser's own
+   (orbit-scene's computed matrix, perspective from orbit-viewport) and is checked against where the
+   endpoint really was drawn; if they disagree the old way (starburst slides onto the tip) is used. */
+function bendXOntoBurst(){
+  const scene = document.querySelector('.scene').getBoundingClientRect();
+  const ox = scene.left + axisLeft, oy = scene.top + scene.height * 0.46;         // O on screen
+  const p = xEndpoint.getBoundingClientRect(), b = burst.getBoundingClientRect();
+  const sx = p.left + p.width / 2, sy = p.top + p.height / 2;                    // where the tip is now
+  const bx = b.left + b.width / 2, by = b.top + b.height / 2;                    // where it has to be
+  const tr = getComputedStyle(orbitScene).transform;
+  const M = new DOMMatrix(tr === 'none' ? undefined : tr);
+  const D = parseFloat(getComputedStyle(document.getElementById('orbitViewport')).perspective) || 1400;
+  const Q = M.transformPoint(new DOMPoint(0.5, 0.5, -axisH));                    // the endpoint's centre, seen from the camera
+  const f = D / (D - Q.z);
+  if (!(Math.hypot(ox + f * Q.x - sx, oy + f * Q.y - sy) < 2.5)) return false;   // self-check failed
+  const C = M.inverse().transformPoint(new DOMPoint(Q.x + (bx - sx) / f, Q.y + (by - sy) / f, Q.z));
+  const tip = { x: C.x, y: C.y - 0.5, z: C.z };                                   // the line's tip (the endpoint's centre is half a pixel down)
+  rig.bent = [tip.x, tip.y, tip.z];                                              // the WebGL X axis starts from here
+  rig.relax = 0;
+  return true;
+}
+function relaxX(ms){                                                              // back to the straight depth axis
+  tween(ms, p => { rig.relax = p; rig.dirty = true; }, EASE_HOME);
+}
+
+async function onXHit(){
+  xRevealed = true;
+  sequenceStarted = true;
+  document.body.classList.add('locked');          // no scroll
+  controls.enabled = false;                       // no orbit
+  controls.enableDamping = false;                 // and no coasting
+  hatNote.classList.remove('show');
+  await frames(2);
+
+  // the axis is bent so its tip sits exactly on the starburst (which stays where it is)
+  if (bendXOntoBurst()) {
+    await sleep(350);
+  } else {                                        // fallback: the starburst slides onto the exact projected tip
+    const p = xEndpoint.getBoundingClientRect(), b = burst.getBoundingClientRect();
+    const dx = (p.left + p.width / 2) - (b.left + b.width / 2);
+    const dy = (p.top + p.height / 2) - (b.top + b.height / 2);
+    burst.style.translate = `calc(-50% + ${dx}px) ${dy}px`;
+    await sleep(550);
+  }
+
+  rigStart();                                     // the three axes become cylinders; X grows from the starburst toward O
+  await sleep(1500 * HIT_SLOW);
+
+  burst.classList.add('x-hit');                   // starburst goes out
+  await sleep(400 * HIT_SLOW);
+
+  // labelling + home position in one move: the titles glide onto their axes while the axes
+  // turn over and the camera goes to the home pose.
+  attachLabels();
+  composed = true;
+  root.style.setProperty('--flip', '180deg');
+  tween(1700 * HIT_SLOW, p => { rig.flip = 180 * p; rig.dirty = true; }, EASE_HOME);   // Z up, X toward the viewer
+  measureAxisLength();                            // O to the centre, shrink to fit
+  goHome(1700 * HIT_SLOW);                        // Z up, X lower left, Y lower right
+  relaxX(1700 * HIT_SLOW);                        // the bend of X goes away in the same move
+  await sleep(1800 * HIT_SLOW);
+
+  controls.enableDamping = true;                  // unlock
+  controls.enabled = true;
+  document.body.classList.remove('locked');
+  armEnding();
+}
+
+/* --- finale: reverse scroll -------------------------------------------------------------------
+   From the home position on, scrolling back up (wheel, keys, swipe down, scrollbar) starts the
+   ending once:
+   1. ink and paper swap (:root.inverted); the stars turn light and brighter, and fade out and back in as
+      a new 3D arrangement in which "J. D. S" can be seen from one viewpoint (see below)
+   2. the three titles fade out while X / Y / Z fade in just beyond the axis tips
+   3. the three axes and the letters shorten toward O together (same duration, same easing), then fade
+   4. the closing text fades in at the centre, line by line; the star field stays draggable */
+const T_INVERT = 1800;                           // = the 1.8s on --paper / --ink in the CSS
+const T_CONV = 1900;
+const CONV_EASE = 'cubic-bezier(.65,0,.35,1)';   // the easing the home-position move already uses
+
+function tween(ms, fn, ease = easeInOut){
+  return new Promise(resolve => {
+    const t0 = performance.now();
+    const f = now => {
+      const p = clamp((now - t0) / ms, 0, 1);
+      fn(ease(p));
+      p < 1 ? requestAnimationFrame(f) : resolve();
+    };
+    requestAnimationFrame(f);
+  });
+}
+
+/* --- finale: the stars re-arrange -------------------------------------------------------------
+   While the screen switches the stars fade out, are put in new places unseen, and fade back in: the
+   9 ruled rows are gone and a loose 3D field takes their place.
+   SIG_STARS of them, though, are placed on the lines of sight of one particular camera (SIG_YAW /
+   SIG_PITCH): each sits at a random depth on the ray through its spot in the letters "J. D. S", so
+   from that one viewpoint they line up as the initials, and from anywhere else they are just stars.
+   Letting go of a drag close to that viewpoint glides the camera the last few degrees into it. */
+const SIG_TEXT = 'J. D. S';
+const SIG_YAW = -35, SIG_PITCH = 10;   // degrees, same convention as HOME_*: the camera to the left of centre, a little above
+const SIG_STARS = 180;                 // how many of the STAR_COUNT stars draw the letters
+const SIG_DEPTH = 0.18;                // ± depth spread along each line of sight (fraction of the camera distance)
+const SNAP_DEG = 9;
+const sigDir = new THREE.Vector3().setFromSphericalCoords(1, (90 - SIG_PITCH) * DEG, SIG_YAW * DEG);
+let sigReady = false;                  // the stars have settled into their new places
+
+// the letters as ~SIG_STARS evenly spread points (dart throwing over the glyph pixels), in bitmap px
+async function sampleSignature(){
+  const face = 'italic 500 220px "Playfair Display", serif';   // the face of the titles
+  try { await document.fonts.load(face); } catch (e) { /* falls back to the serif */ }
+  const probe = document.createElement('canvas').getContext('2d');
+  probe.font = face;
+  const cw = Math.ceil(probe.measureText(SIG_TEXT).width) + 80, ch = 340;
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = ch;
+  const ctx = cv.getContext('2d');
+  ctx.font = face; ctx.fillStyle = '#000';
+  ctx.fillText(SIG_TEXT, 40, 250);
+  const { data } = ctx.getImageData(0, 0, cw, ch);
+  const cand = [];
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let y = 0; y < ch; y += 2) for (let x = 0; x < cw; x += 2) {
+    if (data[(y * cw + x) * 4 + 3] <= 128) continue;
+    cand.push([x, y]);
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  for (let i = cand.length - 1; i > 0; i--) {                  // shuffle
+    const j = Math.floor(Math.random() * (i + 1));
+    [cand[i], cand[j]] = [cand[j], cand[i]];
+  }
+  // every candidate is looked at, so the small full stops get a star too; d is tuned until the count fits
+  let d = Math.sqrt(cand.length * 4 / SIG_STARS) * 0.9, picked = [];
+  for (let it = 0; it < 24; it++) {
+    picked = [];
+    const d2 = d * d;
+    for (const c of cand) {
+      let free = true;
+      for (const p of picked) {
+        const dx = p[0] - c[0], dy = p[1] - c[1];
+        if (dx * dx + dy * dy < d2) { free = false; break; }
+      }
+      if (free) picked.push(c);
+    }
+    if (picked.length > SIG_STARS) d *= 1.05;
+    else if (picked.length < SIG_STARS * 0.85) d *= 0.95;
+    else break;
+  }
+  picked.length = Math.min(picked.length, SIG_STARS);
+  return { pts: picked, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+}
+
+// the new position of every star
+async function buildStarTargets(){
+  const sig = await sampleSignature();
+  const R = camera.position.distanceTo(controls.target);
+  const C = sigDir.clone().multiplyScalar(R);                  // the special camera
+  const fwd = sigDir.clone().negate();
+  const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+  const up = new THREE.Vector3().crossVectors(right, fwd);
+  // the letters sit in the upper part of the picture (the closing text is in the middle), and never
+  // wider than 3/4 of the canvas
+  const halfH = R * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), halfW = halfH * camera.aspect;
+  const Hg = Math.min(0.28 * halfH, 1.5 * halfW * sig.h / sig.w);
+  const k = Hg / sig.h, yc = 0.58 * halfH;
+
+  const target = new Float32Array(STAR_COUNT * 3);
+  const P = new THREE.Vector3();
+  sig.pts.forEach(([px, py], i) => {
+    P.copy(right).multiplyScalar((px - sig.cx) * k).addScaledVector(up, -(py - sig.cy) * k + yc);   // its spot on the picture plane
+    P.sub(C).multiplyScalar(1 + (Math.random() * 2 - 1) * SIG_DEPTH).add(C);                        // slid along the line of sight
+    target.set([P.x, P.y, P.z], i * 3);
+  });
+  for (let i = sig.pts.length; i < STAR_COUNT; i++) {
+    target.set([(Math.random() - .5) * 1600, (Math.random() - .5) * 1000, (Math.random() - .5) * 900], i * 3);
+  }
+  return target;
+}
+
+// all stars fade towards `to` (from: their current alphas), each starting a little later than the others
+function fadeStars(from, to, ms){
+  const LAG = 0.4;
+  const lag = Float32Array.from({ length: STAR_COUNT }, () => Math.random() * LAG);
+  return tween(ms, p => {
+    for (let i = 0; i < STAR_COUNT; i++) {
+      const q = easeInOut(clamp((p - lag[i]) / (1 - LAG), 0, 1));
+      starAlpha[i * 4 + 3] = from[i] + (to - from[i]) * q;
+    }
+    starGeo.attributes.color.needsUpdate = true;
+  }, x => x);
+}
+
+// the old sky fades out, the stars are put in their new places while none can be seen, the new sky
+// fades in. Nothing is ever seen moving: watching the stars fly into the letters would give it away.
+async function reshuffleStars(){
+  const targets = buildStarTargets();                          // (starts now, needed at the swap)
+  const shown = Float32Array.from({ length: STAR_COUNT }, (_, i) => starAlpha[i * 4 + 3]);
+  await fadeStars(shown, 0, 900);
+  starField.frustumCulled = false;                             // the bounding sphere was made for the old places
+  starPos.set(await targets);
+  starGeo.attributes.position.needsUpdate = true;
+  await fadeStars(new Float32Array(STAR_COUNT), 1, 1500);
+}
+
+controls.addEventListener('end', () => {
+  if (!sigReady || camTween) return;
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  if (dir.angleTo(sigDir) > SNAP_DEG * DEG) return;
+  controls.enabled = false;                                    // no coasting, no new drag while the camera glides in
+  controls.enableDamping = false;
+  goPose(SIG_YAW, SIG_PITCH, 800);
+  setTimeout(() => { controls.enableDamping = true; controls.enabled = true; }, 850);
+});
+
+let lastScrollY = window.scrollY;
+function armEnding(){
+  lastScrollY = window.scrollY;
+  setTimeout(() => { endArmed = true; }, 500);   // let the unlock settle first
+}
+function reverseScroll(){ if (endArmed && !ending) startEnding(); }
+
+async function startEnding(){
+  ending = true;
+  controls.enabled = false;                      // the camera holds still for the finale
+  controls.enableDamping = false;
+  starCanvas.classList.remove('ready');
+  billboardOn = true;
+  applyBillboard(THREE.MathUtils.radToDeg(camSpherical.theta), 90 - THREE.MathUtils.radToDeg(camSpherical.phi));
+
+  // 1. ink <-> paper; the star dots go from ink to paper colour and brighten
+  root.classList.add('inverted');
+  const c0 = starMat.color.clone(), c1 = new THREE.Color(0xf4f1ea), o0 = starMat.opacity;
+  tween(T_INVERT, p => {
+    starMat.color.lerpColors(c0, c1, p);
+    starMat.opacity = o0 + (0.9 - o0) * p;
+    for (const m of rigMat) m.color.lerpColors(INK_C, PAPER_C, p);      // the cylinders are ink too
+    rig.dirty = true;
+  });
+
+  // the sky fades out and a new one fades in (see "the stars re-arrange" above); stars not yet
+  // added by the scroll come in with it
+  reshuffleStars()
+    .then(() => { sigReady = true; })
+    .catch(err => console.error('star re-arrangement failed', err));
+
+  // 2. titles fade out, X / Y / Z fade in at the tips (staggered)
+  for (const L of AXIS_LABELS) { L.el.style.transition = 'opacity 1.2s ease'; L.el.style.opacity = '0'; }
+  await sleep(400);
+  END_LETTERS.forEach((L, i) => { L.tx.style.transition = `opacity 1.1s ease ${i * 160}ms`; L.tx.style.opacity = '1'; });
+  await sleep(2400);                             // hold: inverted, X Y Z standing at the tips
+
+  // 3. everything shortens toward O; the tips of the axes and the letters travel together
+  const fadeT = `700ms ease ${T_CONV - 700}ms`, fade = `opacity ${fadeT}`;
+  for (const L of END_LETTERS) {
+    L.el.style.transition = `transform ${T_CONV}ms ${CONV_EASE}`;
+    L.tx.style.transition = fade;
+  }
+  void labels3d.offsetWidth;                     // commit the transitions before the end state is set
+  // the cylinders: same length curve as the letters' travel, fading at the tail of it
+  tween(T_CONV, q => {
+    rig.conv = 1 - EASE_HOME(q);
+    rig.fade = 1 - EASE_CSS(clamp((q * T_CONV - (T_CONV - 700)) / 700, 0, 1));
+    rig.dirty = true;
+  }, x => x);
+  placeEndLetters(axisH, 0);
+  for (const L of END_LETTERS) L.tx.style.opacity = '0';
+  await sleep(T_CONV + 300);
+  rig.on = false; axesCanvas.style.visibility = 'hidden';
+  billboardOn = false;
+
+  // 4. the closing text
+  finale.classList.add('show');
+  await sleep(4000);
+
+  controls.enableDamping = true;                 // the universe can be turned again
+  controls.enabled = true;
+  starCanvas.classList.add('ready');
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  stepCamTween(performance.now());
+  controls.update();
+  renderer.render(threeScene, camera);
+  syncCssCamera();
+  updateRig();
+  checkXReveal();
+}
+animate();
+
+let opened = false;
+let hintOn = false;   // the "scroll" hint is only for the very start: it fades as soon as the page moves
+function updateHint(su){ hint.style.opacity = hintOn ? 0.6 * (1 - rangeT(su, 0, 0.12)) : 0; }
+// The Catcher never moves: it stands from the start in the top slot (7vh + the burst's size above the axis row),
+// with the starburst right under it (see --burst-lift). Nine Stories comes in like every other
+// title: it fades in while rising the last 10px.
+entryCatcher.style.transform = 'translateY(calc(-100% - 7vh - var(--burst-size)))';
+entryNine.style.transform = 'translateY(calc(-100% - var(--axis-label-gap) + 10px))';
+
+requestAnimationFrame(() => {
+  setTimeout(() => burst.classList.add('enter'), 120);
+});
+
+burst.addEventListener('click', () => {
+  if (opened) return;
+  opened = true;
+  document.body.classList.add('opened-once');   // from here on the page may be scrolled: the load handler above leaves it alone
+  burst.classList.add('opened');
+  entryCatcher.classList.add('show');
+  document.body.classList.remove('locked');
+  setTimeout(() => { hintOn = true; updateHint(window.scrollY / window.innerHeight); }, 900);
+});
+
+function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+// 0 -> 1 while the tip of the growing Z axis passes row k of the Glass Saga's 6 works: each row is
+// wiped out by the line as it reaches it (the last one is done exactly when the line is)
+function glassWipe(vT, k){
+  const end = Math.min(glassRows[k] + GLASS_WIPE, 1);
+  return rangeT(vT, Math.min(glassRows[k] - GLASS_WIPE, end - 0.05), end);
+}
+function rangeT(x, a, b){ return clamp((x - a) / (b - a), 0, 1); }
+function triangle(x, inStart, inEnd, holdEnd, outEnd){
+  if (x < inStart) return 0;
+  if (x < inEnd) return rangeT(x, inStart, inEnd);
+  if (x < holdEnd) return 1;
+  if (x < outEnd) return 1 - rangeT(x, holdEnd, outEnd);
+  return 0;
+}
+
+/* --- scroll timeline (su = scrolled distance in viewport heights) ---------------------------------
+   Two rules shape it:
+   - after every piece of text there is a GAP in which nothing but stars is added, so a fling whose
+     momentum overshoots lands in the gap instead of skipping the next event;
+   - the axis events (a line growing, the axis turning) are long, so they play slowly under the finger.
+   Everything below is laid end to end from these few numbers. */
+const GAP = 0.5;
+const AXIS_GROW = 0.5;     // the vertical axis of Nine Stories grows
+const AXIS_LAG = 0.5;      // ... stays as it is for a while before it starts to turn
+const AXIS_TURN = 1.5;     // ... and turns to horizontal (the nine titles fold up meanwhile)
+const Z_GROW = 0.7;        // the Z axis grows; the Glass Saga's 6 works fade out along it, row by row
+const GLASS_TITLE_LEN = 0.3; // and only then does "The Glass Saga" appear
+const GLASS_OUT = 12;      // vw: how far to the left each of the 6 works drifts while it fades
+const GLASS_WIPE = 0.07;   // fraction of the axis length over which a row fades while the line passes it
+
+const QOUT = 0.15;                                                    // scroll length over which a question goes out, ending where the next one starts to come in
+const Q1 = [0, 0.30, 0.55, 0.85];                                     // "Why is his time stopped?": in, hold, out (now: in only, it stays; see onScroll)
+const NINE = [Q1[3] + GAP, Q1[3] + GAP + 0.30];                       // Nine Stories slides in
+const Q2 = [0, 0.25, 0.50, 0.80].map(v => NINE[1] + GAP + v);         // "Why did he shoot himself?"
+const STORY_START = Q2[3] + GAP, STORY_STEP = 0.09;
+const STORY_RANGES = stories.map((_, i) => [STORY_START + i * STORY_STEP, STORY_START + i * STORY_STEP + STORY_STEP]);
+const STORY_END = STORY_START + stories.length * STORY_STEP;
+const STORY_VLINE = [STORY_END + GAP, STORY_END + GAP + AXIS_GROW];
+const ROTATE = [STORY_VLINE[1] + AXIS_LAG, STORY_VLINE[1] + AXIS_LAG + AXIS_TURN];
+// the 9 stories fold up from the bottom: each title slides up into the one above and is gone
+// (Teddy into De Daumier, De Daumier into Pretty Mouth, …). Starts together with the rotation of
+// the vertical axis; only A Perfect Day is left when the Y axis has turned horizontal.
+const COLLAPSE = [ROTATE[0], ROTATE[1]];
+const Q3 = [0, 0.25, 0.50, 0.75].map(v => ROTATE[1] + GAP + v);       // "Why is that shot the beginning?"
+const MERGE_D = (COLLAPSE[1] - COLLAPSE[0]) / (stories.length - 1);
+
+const FRANNY_START = Q3[3] + GAP, FRANNY_STEP = 0.12;
+const SUB_RANGES = subs.map((_, i) => [FRANNY_START + i * FRANNY_STEP, FRANNY_START + i * FRANNY_STEP + FRANNY_STEP]);
+const FRANNY_END = FRANNY_START + subs.length * FRANNY_STEP;
+const FRANNY_AXIS_V = [FRANNY_END + GAP, FRANNY_END + GAP + Z_GROW];
+const GLASS_TITLE = [FRANNY_AXIS_V[1], FRANNY_AXIS_V[1] + GLASS_TITLE_LEN];   // last: the title, once the works are gone
+const SCROLL_END = GLASS_TITLE[1] + GAP;     // last stretch: the camera note is up, only stars are added
+document.querySelector('.track').style.height = (SCROLL_END + 1) * 100 + 'dvh';
+
+// one translucent page per text milestone: q1, Nine Stories, q2, stories (start / mid), story axis,
+// q3, Franny group, Glass Saga, camera note. [dx, dy, rotateDeg] = slight misalignment per sheet.
+const PAGE_AT = [Q1[0], NINE[0], Q2[0], STORY_START, STORY_START + 0.65, ROTATE[0], Q3[0], FRANNY_START, FRANNY_AXIS_V[0], GLASS_TITLE[1]];
+const PAGE_JITTER = [[-3,2,-.25],[2,-3,.2],[-1,4,.3],[4,1,-.2],[-4,-2,.15],[1,-4,-.3],[3,3,.25],[-2,1,-.1],[-3,-3,.2],[2,3,-.15]];
+const pagesEl = document.getElementById('pages');
+const pageEls = PAGE_AT.map(() => {
+  const d = document.createElement('div');
+  d.className = 'page';
+  pagesEl.appendChild(d);
+  return d;
+});
+
+function onScroll(){
+  if (sequenceStarted) return; // after the X hit the scroll-driven scenes stay as they are
+  const H = window.innerHeight;
+  const su = window.scrollY / H;
+
+  updateStars(clamp(su / SCROLL_END, 0, 1));   // stars are added evenly over the whole scroll, from the first pixel
+  updateHint(su);
+
+  // each question stays up until the next text at the bottom is about to arrive (it then goes out
+  // just before that one comes in): q1 -> q2 -> q3 -> the camera note
+  const q1i = rangeT(su, Q1[0], Q1[1]), q1o = q1i * (1 - rangeT(su, Q2[0] - QOUT, Q2[0]));
+  q1.style.opacity = q1o;
+  q1.style.transform = `translateY(${(1 - q1i) * 10}px)`;
+
+  const nineT = rangeT(su, NINE[0], NINE[1]);
+  entryNine.style.opacity = nineT;
+  entryNine.style.transform = `translateY(calc(-100% - var(--axis-label-gap) + ${(1 - nineT) * 10}px))`;
+
+  const q2i = rangeT(su, Q2[0], Q2[1]), q2o = q2i * (1 - rangeT(su, Q3[0] - QOUT, Q3[0]));
+  q2.style.opacity = q2o;
+  q2.style.transform = `translateY(${(1 - q2i) * 10}px)`;
+
+  const q3i = rangeT(su, Q3[0], Q3[1]);                         // q3 stays until the camera note comes (see .gone)
+  q3.style.opacity = q3i;
+  q3.style.transform = `translateY(${(1 - q3i) * 10}px)`;
+
+  const vT = rangeT(su, FRANNY_AXIS_V[0], FRANNY_AXIS_V[1]);
+
+  const rotT = rangeT(su, ROTATE[0], ROTATE[1]);
+  stories.forEach((el, i) => {
+    const [a, b] = STORY_RANGES[i];
+    const t = rangeT(su, a, b);
+    if (i === 0) {                                  // A Perfect Day stays until the Z axis takes over (then it leaves with the other five)
+      const w = glassWipe(vT, 0);
+      el.style.opacity = t * (1 - w);
+      el.style.transform = `translate(${-w * GLASS_OUT}vw, ${(1 - t) * 10}px)`;
+      return;
+    }
+    const k = stories.length - 1 - i;               // 0 for Teddy, the first to go
+    const m = rangeT(su, COLLAPSE[0] + k * MERGE_D, COLLAPSE[0] + (k + 1) * MERGE_D);
+    el.style.opacity = t * (1 - m);
+    el.style.transform = `translateY(${(1 - t) * 10 - m * storyStep}px)`;
+  });
+
+  const storyVT = rangeT(su, STORY_VLINE[0], STORY_VLINE[1]);
+  storyAxisV.style.transform = `rotate(${rotT * -90}deg) scaleY(${storyVT})`;
+  storyAxisV.style.setProperty('--o', storyVT * 0.8);
+
+  axisV.style.transform = `scaleY(${vT})`;
+  axisV.style.setProperty('--o', vT * 0.8);
+
+  subs.forEach((el, i) => {
+    const [a, b] = SUB_RANGES[i];
+    const t = rangeT(su, a, b);
+    const w = glassWipe(vT, i + 1);
+    el.style.opacity = t * (1 - w);
+    el.style.transform = `translate(${-w * GLASS_OUT}vw, ${(1 - t) * 10}px)`;
+  });
+
+  const glassT = rangeT(su, GLASS_TITLE[0], GLASS_TITLE[1]);
+  glassTitle.style.opacity = glassT;
+  glassTitle.style.transform = `rotate(90deg) translate(calc(-50% + ${(1 - glassT) * -10}px), -100%)`;
+
+  pageEls.forEach((el, i) => {
+    const t = rangeT(su, PAGE_AT[i], PAGE_AT[i] + 0.25);
+    const [dx, dy, r] = PAGE_JITTER[i];
+    el.style.opacity = t;
+    el.style.transform = `translate(${dx}px, ${dy + (1 - t) * 14}px) rotate(${r}deg)`;
+  });
+
+  const nowYReady = rotT >= 0.999;
+  const nowZReady = glassT >= 0.999;
+  if (nowYReady !== yReady || nowZReady !== zReady) {
+    yReady = nowYReady;
+    zReady = nowZReady;
+    updateReadyClasses();
+  }
+}
+
+// onScroll runs at most once per rendered frame: native scroll events on mobile can fire faster
+// than the screen repaints, especially during a fast fling, and running the ~30 style writes below
+// for every one of them was extra work with no visible benefit — the frame budget is better spent
+// keeping up with the render loop. A queued call always uses the freshest scrollY, so nothing is
+// skipped, only coalesced.
+let scrollQueued = false;
+function queueScroll(){
+  if (scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(() => { scrollQueued = false; onScroll(); });
+}
+window.addEventListener('scroll', queueScroll, { passive: true });
+onScroll();
+
+// reverse scroll = any way of going back up the page. reverseScroll() does nothing until the
+// home position has been reached (armEnding), and only ever starts the finale once.
+window.addEventListener('wheel', e => { if (e.deltaY < 0 && !e.ctrlKey) reverseScroll(); }, { passive: true });
+window.addEventListener('keydown', e => { if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') reverseScroll(); });
+window.addEventListener('scroll', () => {
+  if (window.scrollY < lastScrollY - 2) reverseScroll();
+  lastScrollY = window.scrollY;
+}, { passive: true });
+let touchY0 = null;                              // swipe down = the page going back up
+window.addEventListener('touchstart', e => { touchY0 = e.touches[0].clientY; }, { passive: true });
+window.addEventListener('touchmove', e => {
+  if (touchY0 !== null && e.touches[0].clientY - touchY0 > 48) { touchY0 = null; reverseScroll(); }
+}, { passive: true });
+</script>
+</body>
+</html>
