@@ -34,7 +34,7 @@ export function createBanana(scene) {
   };
 
   new GLTFLoader().load(
-    './banana.glb',
+    './assets/banana.glb',
     (gltf) => {
       const whole = gltf.scene.getObjectByName('Banana_Whole');
       let loadedShards = [];
