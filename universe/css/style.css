@@ -1,0 +1,119 @@
+html, body { margin: 0; height: 100%; background: #05050a; overflow: hidden; font-family: sans-serif; }
+canvas { display: block; }
+
+#hint {
+  position: fixed;
+  top: 62%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ffffff;
+  /* ★ 'Cormorant Garamond'を外し、フォールバックのTimes New Romanだけを使うようにした。
+     Webフォントの読み込み待ちによる「太字(フォールバック)→細字(Cormorant Garamond)」の
+     ちらつきは、そもそもこのフォントへ切り替わらなくなったことで発生しなくなる。 */
+  font-family: 'Times New Roman', serif;
+  font-size: clamp(23px, 3vw, 50px);
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  opacity: 0.8;
+  pointer-events: none;
+  transition: opacity 0.6s;
+  z-index: 10;
+}
+#hint.hidden { opacity: 0; }
+
+#dialogue {
+  position: fixed; left: 0; top: 0;
+  max-width: 320px; padding: 0;
+  background: none; border: none; box-shadow: none;
+  color: #eef7ff; font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+  font-style: italic; font-weight: 500; font-size: 19px; line-height: 1.7;
+  text-align: center; letter-spacing: 0.01em;
+  text-shadow: 0 0 14px rgba(140, 195, 255, 0.65), 0 1px 3px rgba(0, 0, 0, 0.85);
+  opacity: 0; pointer-events: none; transition: opacity 0.7s ease, transform 0.7s ease;
+  white-space: pre-line; transform: translate(-50%, -100%) translateY(4px);
+}
+#dialogue.show { opacity: 1; transform: translate(-50%, -100%) translateY(-6px); }
+
+#axisHint {
+  position: fixed; top: 16px; left: 16px; color: #cfeeff; font-size: 14px;
+  font-family: 'Playfair Display', 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  opacity: 0; transition: opacity 0.6s;
+}
+#axisHint.show { opacity: 0.6; }
+
+/* ── ビリヤード台オーバーレイ(YZパネルから出現) ───────────────── */
+.billiard-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+.billiard-overlay.show { opacity: 1; pointer-events: auto; }
+
+.billiard-hint {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  color: rgba(220,225,255,0.55); font: 300 12px/1.4 'Segoe UI', sans-serif;
+  letter-spacing: 0.08em; text-align: center; pointer-events: none;
+  text-shadow: 0 0 12px rgba(120,140,255,0.5);
+  transition: opacity 2s ease;
+}
+
+/* 見た目(枠なし・矢印・発光hover)は common/iconButton.js の .icon-btn が担う。
+   ここでは位置指定のみを行う。 */
+.billiard-replay {
+  position: fixed; right: 22px; top: 22px;
+}
+
+.billiard-close {
+  position: fixed; left: 22px; top: 22px;
+}
+
+/* セリフの星(5個)のテキスト表示。#dialogueと同じ見た目をビリヤード用に複製 */
+.billiard-dialogue {
+  position: fixed; left: 0; top: 0; z-index: 60;
+  max-width: 320px; padding: 0;
+  background: none; border: none; box-shadow: none;
+  color: #eef7ff; font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+  font-style: italic; font-weight: 500; font-size: 19px; line-height: 1.7;
+  text-align: center; letter-spacing: 0.01em;
+  text-shadow: 0 0 14px rgba(140, 195, 255, 0.65), 0 1px 3px rgba(0, 0, 0, 0.85);
+  opacity: 0; pointer-events: none; transition: opacity 0.7s ease, transform 0.7s ease;
+  white-space: pre-line; transform: translate(-50%, -100%) translateY(4px);
+}
+.billiard-dialogue.show { opacity: 1; transform: translate(-50%, -100%) translateY(-6px); }
+
+/* ポケット(作品名)のホバーツールチップ。マウス追従、クリック不要。
+   星のセリフ(.billiard-dialogue)と同じ「枠なしイタリック」の見た目に揃える */
+.billiard-pocket-tooltip {
+  position: fixed; left: 0; top: 0; z-index: 60;
+  background: none; border: none; box-shadow: none; padding: 0;
+  color: #eef7ff; font-family: 'Cormorant Garamond', 'Times New Roman', serif;
+  font-style: italic; font-weight: 500; font-size: 16px; line-height: 1.5;
+  letter-spacing: 0.01em; white-space: nowrap;
+  text-shadow: 0 0 14px rgba(140, 195, 255, 0.65), 0 1px 3px rgba(0, 0, 0, 0.85);
+  opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+  transform: translate(-50%, -130%);
+}
+.billiard-pocket-tooltip.show { opacity: 1; }
+
+/* ── バナナフィッシュ・オーバーレイ(Y軸原点から出現) ───────────────── */
+/* billiard-overlayと同じ仕様(z-index/transition/表示切り替え)に揃えている。
+   背景のグラデーションだけはbananafish固有(窓側=海、扉側=砂を思わせる色)。 */
+.bananafish-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.6s ease;
+  background: linear-gradient(to right, #0d2338 0%, #1f4d78 35%, #8a7a56 68%, #cba166 100%);
+}
+.bananafish-overlay.show { opacity: 1; pointer-events: auto; }
+.bananafish-overlay canvas { cursor: crosshair; }
+
+/* 見た目(枠なし・矢印・発光hover)はcommon/iconButton.jsの.icon-btnが担う。
+   billiard-closeと同じ位置(左上)。 */
+.bananafish-close {
+  position: fixed; left: 22px; top: 22px;
+}
