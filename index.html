@@ -1,10 +1,39 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Banana.com</title>
+<title>Just a Banana</title>
+<link rel="icon" href="/assets/favicon.ico" sizes="32x32">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <meta name="description" content="An interactive space built around J.D. Salinger. Nobody knows which ocean the banana prefers.">
+<link rel="canonical" href="https://metaphony.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Just a Banana">
+<meta property="og:title" content="Just a Banana">
+<meta property="og:description" content="An interactive space built around J.D. Salinger. Nobody knows which ocean the banana prefers.">
+<meta property="og:url" content="https://metaphony.com/">
+<meta property="og:image" content="https://metaphony.com/assets/ogp.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CreativeWork",
+  "name": "Just a Banana",
+  "alternateName": "Metaphony",
+  "url": "https://metaphony.com/",
+  "inLanguage": "en",
+  "genre": "interactive web art",
+  "description": "An interactive WebGL work built around J.D. Salinger",
+  "about": [
+    { "@type": "Person", "name": "J. D. Salinger" },
+    { "@type": "CreativeWork", "name": "A Perfect Day for Bananafish" },
+    { "@type": "Thing", "name": "The Catcher in the Rye" },
+    { "@type": "Thing", "name": "Glass family stories" }
+  ]
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
@@ -19,6 +48,12 @@
     overflow: hidden;
   }
   canvas { display: block; }
+
+  /* 画面には出さず、検索エンジンとスクリーンリーダーにだけ読ませるテキスト */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
 
   /* 常時表示される、元々のままの全画面シーン */
   #bg {
@@ -104,6 +139,9 @@
 </style>
 </head>
 <body>
+<h1 class="sr-only" data-nosnippet>Just a Banana</h1>
+<p class="sr-only" data-nosnippet>Just a Banana is an interactive WebGL work inspired by J.D. Salinger and his short story A Perfect Day for Bananafish.</p>
+<noscript><p>Just a Banana is an interactive experience. Please enable JavaScript.</p></noscript>
 <div id="sceneRotator">
   <canvas id="bg"></canvas>
   <div id="revealLayer">
@@ -569,8 +607,8 @@ function computeBananaNightResampled() {
 //    #sceneRotator全体がnightTに応じて回転するので、テキストだけは画面上で
 //    位置が動かないよう、描画位置をあらかじめ逆回転させておく。
 // ---------------------------------------------
-const SKY_TEXT_DAY = 'Just a banana';
-const SKY_TEXT_NIGHT = 'Reflected by Metaphony.';
+const SKY_TEXT_DAY = 'Just a Banana';
+const SKY_TEXT_NIGHT = 'Reflected by Metaphony';
 const SEA_TEXT_DAY = ['The banana was here.', 'Someone found it.', 'The banana was here either way.'];
 const SEA_TEXT_NIGHT = ['An apple fell. There was a discoverer.', 'It will never fall.'];
 const SEA_TEXT_NIGHT_LOWER = ['Existence is not discovery.', 'It is preserved in the sea of information.'];
