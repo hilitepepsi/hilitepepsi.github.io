@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createBackButton } from './iconButton.js';
+import { getSourceCaption } from './captions.js'; // 作品名は他の出典と同じ右下の共有ボックスに出す
 
 // ── バナナフィッシュ・オーバーレイ(A Perfect Day for Bananafish) ─────────────
 // 元は独立した bananafish.html(ホテルの一室:窓側=波、扉側=砂の3Dシーン)だったものを、
@@ -18,6 +19,9 @@ import { createBackButton } from './iconButton.js';
 //     のと同じ考え方)
 //   - THREE.sRGBEncoding / renderer.outputEncoding(r128当時のAPI)は、このプロジェクトが
 //     使っている現行three.jsのAPIであるcolorSpace / THREE.SRGBColorSpaceに置き換えた
+// ページを開いている間、右下に出しっぱなしにする作品名。
+const BANANAFISH_WORK = 'A Perfect Day for Bananafish';
+
 export function createBananafish(opts = {}) {
   const { onClose } = opts;
 
@@ -1106,11 +1110,13 @@ export function createBananafish(opts = {}) {
   function show() {
     reset();
     overlay.classList.add('show');
+    getSourceCaption().setText(BANANAFISH_WORK); // ページを開いている間ずっと表示
     if (!rafId) loop();
   }
 
   function hide() {
     overlay.classList.remove('show');
+    getSourceCaption().hide();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     dragging = false;
   }
