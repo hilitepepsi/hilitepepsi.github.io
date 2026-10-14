@@ -1,10 +1,13 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<title>Metaphony — tutorial preview</title>
+<title>A small visitor</title>
+<link rel="icon" href="/assets/favicon.ico" sizes="48x48">
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <script>
 /* Always start from the starburst. The page is driven by the scroll position, and the scroll is locked
    until the burst is clicked, so a position restored by the browser on reload (or when coming back to
@@ -395,7 +398,7 @@ body.orbiting .sub-entry .year{ opacity:0; }
 }
 
 .hat-note{
-  position:absolute; left:50%; bottom:5vh;
+  position:absolute; left:50%; bottom:3vh;   /* same spot as the questions and the scroll hint */
   transform:translateX(-50%);
   width:min(80vw,460px); text-align:center;
   font-family:'Cormorant Garamond', serif;
@@ -409,7 +412,11 @@ body.orbiting .sub-entry .year{ opacity:0; }
 .hint{
   position:absolute; left:50%; bottom:3vh;
   transform:translateX(-50%);
-  font-size:11px; letter-spacing:.3em; color:var(--ink-soft);
+  font-family:'Cormorant Garamond', serif;
+  font-style:italic;
+  font-size:clamp(16px,4.2vw,22px);
+  line-height:1.8;
+  color:var(--ink);   /* same as .question */
   opacity:0; transition:opacity .5s ease; /* set from JS: shown at the very start only, gone once the first question takes over */
 }
 </style>
@@ -488,7 +495,7 @@ body.orbiting .sub-entry .year{ opacity:0; }
     <p class="question" id="q3">Why is that shot the beginning?</p>
   </div>
 
-  <p class="hat-note" id="hatNote">&ldquo;This is a people shooting hat.&rdquo;<br>Is that a joke?</p>
+  <p class="hat-note" id="hatNote">“This is a people shooting hat.”</p>
 
   <div class="hint" id="hint">scroll</div>
 
@@ -1313,7 +1320,7 @@ animate();
 
 let opened = false;
 let hintOn = false;   // the "scroll" hint is only for the very start: it fades as soon as the page moves
-function updateHint(su){ hint.style.opacity = hintOn ? 0.6 * (1 - rangeT(su, 0, 0.12)) : 0; }
+function updateHint(su){ hint.style.opacity = hintOn ? 1 - rangeT(su, 0, 0.12) : 0; }
 // The Catcher never moves: it stands from the start in the top slot (7vh + the burst's size above the axis row),
 // with the starburst right under it (see --burst-lift). Nine Stories comes in like every other
 // title: it fades in while rising the last 10px.
