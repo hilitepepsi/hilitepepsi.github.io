@@ -17,9 +17,11 @@ import { createAxisLabels } from './axisLabels.js';
 import { createYZPanel } from './yzPanel.js';
 import { createNineBall } from './nineBall.js';
 import { createBananafish } from './bananafish.js';
+import { createEarth } from './earth.js';
 import { createHotspots } from './hotspots.js';
 import { createDialogue } from './dialogue.js';
 import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
+import { reapplySavingWork } from './galaxyGrowth.js';
 import { createIntroSequence } from './introSequence.js';
 import { getAxisStationView, flyToAxisStation, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET } from './config.js';
 import { createAxisStationOverlay } from './axisStationOverlay.js';
@@ -29,13 +31,13 @@ import { createFinale, runFinale, handleIconClick } from './finale.js';
 import { createEquationAssembly, startPhase1, zoomToEquation, startPhase3 } from './equationAssembly.js';
 import { playOriginBurst } from './originBurst.js';
 import { createUniverse, enterUniverse, toggleUniverseEquation, updateUniverse, updateEquationHoverByPointer, revealTripodRing, liftTripod, startTripodRoofPulse, createUniverseProjectionMixer, unlockIh, setTripodAngularSpeed } from './universe.js';
-import { createSolarSystem, updateSolarSystem, generatePlanetTrails, ORBIT_CENTER } from './solarSystem.js';
+import { createSolarSystem, updateSolarSystem, ORBIT_CENTER } from './solarSystem.js';
 import { createGalaxy, updateGalaxy, revealGalaxy, setGalaxyArmEmphasis, setGalaxyDifferentialRotation, ANGULAR_SPEED as GALAXY_ANGULAR_SPEED, ROTATION_DIRECTION as GALAXY_ROTATION_DIRECTION } from './galaxy.js';
 import { createTripodRingSwap, updateTripodRingSwap, finishTripodRingSwap } from './tripodRingSwap.js';
 import { createTiltShift } from './tiltShift.js';
 import {
   createRecordDisplay, startRecordDisplay, tryRecordClick, updateRecordDisplay,
-  applyScroll, SCROLL_MAX,
+  applyScroll, SCROLL_MAX, bindStarburst,
 } from './record.js';
 
 // YZパネルクリック時、メインカメラをビリヤード専用ページと同じ構図にする。
@@ -218,6 +220,7 @@ const solarSystem = createSolarSystem(scene);
 //   「galaxy.js側が銀河の中心をORBIT_CENTERに合わせる想定」とコメントしていた通りに、
 //   ORBIT_CENTERをそのまま銀河の中心として渡すよう修正した。
 const galaxy = createGalaxy(scene, ORBIT_CENTER);
+window.galaxy = galaxy; // デバッグ用。確認が済んだら消す
 // ★ 2026-09-19 追加(ご指摘反映): 「星が明るく、ぼやけてしまった」への対応その3。
 //   galaxy.js側でトーンアームの透過(transmission)用に追加した不透明な「核」レイヤー
 //   (galaxy.opaquePoints)は、見た目上は輝きレイヤー(galaxy.points)の中に完全に隠れる
@@ -235,6 +238,11 @@ setTripodAngularSpeed(GALAXY_ANGULAR_SPEED);
 // 針+太陽系召喚、という一連の流れを管理する(詳細はrecord.js冒頭のコメント参照)。
 // 銀河・太陽系はここで新規作成せず、上で作った既存のgalaxy/solarSystemをそのまま使う。
 const record = createRecordDisplay(scene, renderer, { camera, galaxy, solarSystem, universe, excludeFromBloom });
+// ★ 2026-10-11 追加(ご指示反映): starburstの登場は「トーンアームを置き終えた後」、クリックすると
+//   銀河が育つ(サイト全体の累計。record.js/galaxyGrowth.js参照)。starburstの星はここ(main.js)の
+//   hotspotMeshesが持っているので、recordへ渡しておく。登場前はrecord.js側が非表示に保ち、
+//   登場の瞬間にvisible=trueにする(俯瞰中のanimateでは、もう強制的にvisible=trueにしない)。
+if (starburstMeshes[0]) bindStarburst(record, starburstMeshes[0]);
 // 「二つのtripod・二つの円環」の対応関係クロスフェード+移動演出(tripodRingSwap.js)。
 // universe/recordの両方が揃った後でないと作れないので、ここで呼ぶ。
 const tripodRingSwap = createTripodRingSwap(scene, universe, record);
@@ -315,7 +323,7 @@ const OVERVIEW_FOV_BASE = 70;             // 銀河俯瞰時の既定(ドラッ�
 //   ズームした状態(望遠)ほど絞りを開けて通常の明るさに戻す。fovと同じタイミング
 //   (俯瞰突入のフライト・ドラッグ中・ドラッグ解除で戻る動き)すべてに連動させることで、
 //   「遷移的な絞り変化」にしている。
-const OVERVIEW_EXPOSURE_FAR_MULT = 0.15;  // 仮値。基準fov(遠景)側の露出倍率。1より下げて絞る
+const OVERVIEW_EXPOSURE_FAR_MULT = 0.005;  // 仮値。基準fov(遠景)側の露出倍率。1より下げて絞る
 const OVERVIEW_EXPOSURE_ZOOM_MULT = 1.0;  // 目一杯ズームした側の露出倍率(通常の明るさ)
 const OVERVIEW_FOV_ZOOMED = 0.8;            // 仮値。目一杯ドラッグしたときの最大ズーム。以前より強めた
 const OVERVIEW_FOV_DRAG_DISTANCE = 400;   // 仮値。このぶん(px)左右ドラッグしたらズームが振り切る
@@ -782,6 +790,18 @@ const bananafish = createBananafish({
   }
 });
 
+// Z軸終端の点(Hapworth)をクリックしたときに開く専用ページ(earth_vortex.htmlをオーバーレイ化したもの)。
+// bananafishと同じ仕組み(独立オーバーレイ+onCloseでZステーションへ戻す)。
+// ※ ページを開いている間もカメラはZステーションから動かしていないので、戻るときはカメラを飛ばさず、
+//   cameraBusyを解除してZステーションの追加表示(点・タイトル)を出し直すだけでよい。
+const earth = createEarth({
+  onClose: () => {
+    cameraBusy = false;
+    currentAxisView = 'Z';
+    showZOverlay();
+  }
+});
+
 const dialogue = createDialogue(camera);
 
 const intro = createIntroSequence({
@@ -972,6 +992,7 @@ function hideAxisTipText() {
   if (axisTipHideTimer) { clearTimeout(axisTipHideTimer); axisTipHideTimer = null; }
   axisTipCaption.hide();
   getSourceCaption().hide();
+  reapplySavingWork(); // 「I'm saving them.」を出している間は、その出典(右下)を出し直す
 }
 
 
@@ -1076,14 +1097,8 @@ renderer.domElement.addEventListener('click', (e) => {
           return;
         }
 
-        // 太陽クリック → 8惑星ぶんの黄色い軌跡を一括生成(一度生成したら永続。二度目以降は何もしない)
-        if (solarSystem.group.visible) {
-          const sunHit = raycaster.intersectObject(solarSystem.sunMesh, true)[0];
-          if (sunHit) {
-            generatePlanetTrails(solarSystem);
-            return;
-          }
-        }
+        // ★ 2026-10-11 削除: 以前ここにあった「太陽クリック → 8惑星ぶんの黄色い軌跡を生成」は、
+        //   軌道線を太陽のみ(召喚時に自動で描き始める)にしたので不要になった。
         hideAxisTipText(); // ラベル以外をクリックしたら固定表示のテキストは閉じる
         return; // 宇宙ページ内では、ここまでの判定以外は無視
       }
@@ -1380,8 +1395,11 @@ if (archer.visible) {
   if (axisStationOverlay.zEndDot.visible) {
     const zEndHit = raycaster.intersectObject(axisStationOverlay.zEndDot, true)[0];
     if (zEndHit) {
-      const title = AXIS_CONTENT.Z.end?.title;
-      if (title) dialogue.show(title, axisStationOverlay.zEndDot);
+      // セリフの代わりに、専用ページ(earth.js)をオーバーレイで開く(Y原点→bananafishと同じ導線)。
+      // onCloseが呼ばれるまでcameraBusyをtrueのまま維持する。
+      cameraBusy = true;
+      hideZOverlay();
+      earth.show();
       return;
     }
   }
@@ -1493,6 +1511,9 @@ let labelsShown = false;
 let debugDumpElapsed = 0; // ← デバッグ用: universe.isActive中、一定間隔で自動的にdumpCameraする
 function animate() {
   requestAnimationFrame(animate);
+  // Hapworthページ(earth.js)を開いている間は、メインシーンの更新・描画を止めて負荷を下げる。
+  // clock.getDelta()だけは呼んでおく(戻った直後に巨大なdeltaが入って、宇宙ページの回転などが飛ぶのを防ぐ)。
+  if (earth.isOpen()) { clock.getDelta(); return; }
   const delta = clock.getDelta(); // ← 宇宙ページの回転(updateUniverse)用。フレームの最初に1回だけ呼ぶこと
   const state = intro.getState();
   // ★ 2026-09-11 バグ修正: intro.getState()はuniverseページに入っても'home'には
@@ -1539,7 +1560,7 @@ function animate() {
   try { axes.update(clock.getElapsedTime()); } catch (err) { console.error('axes.update failed:', err); } // 軸ラインの「原点方向へ流れる光」アニメーション
   try { waveScrollController.tickIdleDecay(); } catch (err) { console.error('waveScrollController.tickIdleDecay failed:', err); } // 波面: scrollEnergy(雨量)の減衰と再生速度をゆっくり戻す
   updateUniverse(universe, delta, camera); // 宇宙ページの三軸回転(固定軸まわりのカルーセル回転。isActiveがfalseの間は内部で即returnするので無害)
-  updateSolarSystem(solarSystem, clock.getElapsedTime()); // 太陽系(group.visible=falseの間は内部で即returnするので無害)
+  updateSolarSystem(solarSystem, clock.getElapsedTime()); // 太陽系(召喚=startSolarSystem前は内部で即returnするので無害)
   updateGalaxy(galaxy, delta); // tripod直下の巨大な銀河の自転(state==='hidden'の間は内部で即returnするので無害)
   // ★ 2026-09-12 追加: 「カメラも銀河と同じ速度で回転させたい」とのご指示の反映。
   //   galaxy.js側のupdateGalaxy()は、通常状態(record.js側のneedleSpinActive以外)では
@@ -1630,17 +1651,19 @@ function animate() {
     universe.roofParticles.visible = !hideCarousel;  // tripodが残す粒子の軌跡(carousel側の一部)
     if (universe.ihRevealed) universe.ihSprite.visible = !hideCarousel; // ih
 
-    solarSystem.group.visible = !hideSolarSystem; // 太陽系軌道
+    solarSystem.group.visible = solarSystem.started && !hideSolarSystem; // 太陽系軌道(召喚前=startedがfalseの間は出さない)
     // ★ 2026-09-29 追加(ご指示反映): バルジ(record.bulge。galaxy.starsGroupの子)も
     //   太陽系軌道と同じ可視条件(!hideSolarSystem)に揃える。
     if (record.bulge) record.bulge.visible = !hideSolarSystem;
 
-    // ★ 2026-09-29 追加: starburstの星を銀河中心の少し上へ配置して表示する
-    //   (宇宙ページ突入時にhotspotMeshesは一括で非表示にされているので、ここで個別に再表示する)。
+    // ★ 2026-09-29 追加: starburstの星を銀河中心の少し上へ配置する。
+    // ★ 2026-10-11 変更(ご指示反映): 表示するかどうかは、ここでは決めない。「トーンアームを置き終えた
+    //   後に登場」はrecord.js側(record.starburstRevealed)が管理しているので、それに従う
+    //   (以前は俯瞰中は毎フレーム無条件にvisible=trueにしていたため、登場前から見えてしまっていた)。
     starburstMeshes.forEach((m) => {
       m.position.copy(ORBIT_CENTER).add(STARBURST_OVERVIEW_OFFSET);
       m.scale.setScalar(STARBURST_OVERVIEW_SCALE);
-      m.visible = true;
+      m.visible = record.starburstRevealed;
     });
     // ★ バルジ中心のAスターも、太陽系軌道・バルジと同じ可視条件(8度未満は隠す)に揃える。
     if (record.bulgeStar) record.bulgeStar.visible = !hideSolarSystem;
