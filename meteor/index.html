@@ -132,12 +132,10 @@ body.locked{ overflow:hidden; height:100dvh; }
 #entryCatcher.show{ opacity:1; }
 #entryNine{ opacity:0; }
 
-/* years get out of the way while the user is actively orbiting the camera */
+/* the years stay visible while the camera is orbited (and through the X animation); they go only when the
+   titles become axis labels (.labels3d .year{ opacity:0 } below, applied by attachLabels) */
 .story-entry .story-year,
 .sub-entry .year{ transition:opacity .2s ease; }
-body.orbiting .title-entry .year,
-body.orbiting .story-entry .story-year,
-body.orbiting .sub-entry .year{ opacity:0; }
 
 /* the 9 stories inside Nine Stories. The list starts 3vh below O and JS gives it the height
    that ends exactly where the axis ends, so the 9 titles are spread over the axis length. */
@@ -216,8 +214,19 @@ body.orbiting .sub-entry .year{ opacity:0; }
   font-style:italic;
   font-size:clamp(19px,5vw,28px);
   white-space:nowrap;
+  display:flex; align-items:baseline;
   opacity:0;
   will-change:opacity, transform;
+}
+/* same look as the other titles' years; hangs off the end of the text (the bottom, once rotated) so only the title is centred.
+   It goes with the other two years: .labels3d .year{opacity:0} hides it when the title is attached */
+.glass-title .year{
+  width:0; white-space:nowrap; transform:translateX(.6rem);
+  font-family:'Cormorant Garamond', serif; font-style:normal;
+  font-size:clamp(12px,3vw,15px);
+  letter-spacing:.12em;
+  color:var(--ink-soft);
+  transition:opacity .2s ease;
 }
 
 /* --- orbit control: camera orbits around O — the point where the Y (Nine)
@@ -466,7 +475,7 @@ body.orbiting .sub-entry .year{ opacity:0; }
       </div>
 
       <div class="axis-group" id="zAxisGroup">
-        <div class="glass-title axis-handle" id="glassTitle">The Glass Saga</div>
+        <div class="glass-title axis-handle" id="glassTitle">The Glass Saga<span class="year">1948–65</span></div>
         <div class="axis-v axis-handle" id="axisV"></div>
       </div>
 
@@ -490,7 +499,7 @@ body.orbiting .sub-entry .year{ opacity:0; }
   </div>
 
   <div class="question-slot">
-    <p class="question" id="q1">Why is his time stopped?</p>
+    <p class="question" id="q1">Why is his time frozen?</p>
     <p class="question" id="q2">Why did he shoot himself?</p>
     <p class="question" id="q3">Why is that shot the beginning?</p>
   </div>
@@ -911,7 +920,14 @@ controls.addEventListener('start', () => {
     // could be turned; once it has been, it is no longer needed and collapses to the paper page's
     // own edge (body.expanded), for the rest of the scene.
     document.body.classList.add('expanded');
-    setTimeout(() => { resizeThree(); measureAxisLength(); }, 650);   // after --mx/--my finish collapsing (.6s)
+    // keep the star canvas buffer and the axes' position in step with the collapsing margin on every frame
+    // (a single re-measure 650ms later made the stars stretch meanwhile and the axes jump at the end)
+    const t0 = performance.now();
+    const syncMargin = now => {
+      resizeThree(); measureAxisLength();
+      if (now - t0 < 750) requestAnimationFrame(syncMargin);
+    };
+    syncMargin(t0);
   }
   starMat.sizeAttenuation = true;
   starMat.size = STAR_SIZE_ORBIT;
