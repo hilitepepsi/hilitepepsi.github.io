@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HOME_CAMERA_POS, HOME_CAMERA_TARGET, AXIS_LENGTH, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET } from './config.js';
-import { TRIPOD_ANGULAR_SPEED } from './universe.js';
-import { ORBIT_RADIUS_BASE, setOrbitRadius, setOrbitCenter, growOrbitToFull } from './solarSystem.js';
-import { GALAXY_RADIUS, setGalaxyHole, createStarPointsMaterial, setGalaxySpinBoost, setGalaxyDifferentialRotation } from './galaxy.js';
-import { createCaptionBox, makeCaptionController } from './captions.js';
+import { TRIPOD_ANGULAR_SPEED, RECORD_ANCHOR, TRIPOD_GROUND_Y } from './universe.js';
+import { ORBIT_RADIUS_BASE, startSolarSystem } from './solarSystem.js';
+import { GALAXY_RADIUS, GALAXY_POINT_SIZE, setGalaxyHole, createStarPointsMaterial, setGalaxySpinBoost, setGalaxyDifferentialRotation } from './galaxy.js';
+import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
 import { createAStar } from './aStar.js';
+import { createGalaxyGrowth, refreshGalaxyGrowth, playGalaxyContribution, updateGalaxyGrowth } from './galaxyGrowth.js';
 import { createTrumpetToMetaphony } from './trumpet.js';
 
 // ══════════════════════════════════════════════════════════════
@@ -64,7 +65,14 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 // ── 頂点のバナナ(コピー元: galaxy.js のmakeBananaMesh) ────────────
 const BANANA_RADIUS = 1.5;
 const BANANA_HIT_RADIUS = 10.6;
-export const BANANA_HEIGHT_ABOVE_APEX = AXIS_LENGTH * 0.4; // 頂点よりさらに少し上に乗せる(仮値)
+// ★ 2026-10-11 修正(ご指摘反映): 「バナナ(と、バナナと同じ高さに出るリング)が数式より高い」への対応。
+//   以前は独立した仮値(AXIS_LENGTH*0.4)で、数式の高さ(universe.jsのEQUATION_HEIGHT_ABOVE_APEX=
+//   AXIS_LENGTH*0.15)より0.25*AXIS_LENGTHぶん高かった。鏡tripodはカルーセルのtripodと頂点が
+//   対応して動く(鏡tripodの足元=TRIPOD_GROUND_Yまで降りてくる)ので、バナナを数式と同じ
+//   ワールド高さ(RECORD_ANCHOR.y)に置くには「頂点からの高さ」を数式と同じにすればよい。
+//   別の仮値を持たず、RECORD_ANCHORから導出しているので、数式の高さを変えれば自動で追従する。
+//   tripodRingSwap.js側のリングの高さも、この値(export)から決まる想定。
+export const BANANA_HEIGHT_ABOVE_APEX = RECORD_ANCHOR.y - TRIPOD_GROUND_Y - MIRROR_APEX_HEIGHT;
 
 // ══════════════════════════════════════════════════════════════
 // ▼▼▼ バナナクリック演出: ①戴冠 → ②バルジ出現 → ③太陽系(8惑星)出現 ▼▼▼
@@ -80,7 +88,7 @@ export const BANANA_HEIGHT_ABOVE_APEX = AXIS_LENGTH * 0.4; // 頂点よりさら
 //   なってしまうため、index.htmlと同じ階層に置いたファイルしか見つからない、という
 //   問題が起きる(実際に報告があった不具合の原因)。
 const BANANA_GLB_PATH = new URL('../assets/obj/goldbanana.glb', import.meta.url).href;
-const CROWN_GLB_PATH = new URL('../assets/obj/crown.glb', import.meta.url).href;
+const CROWN_GLB_PATH = new URL('/assets/obj/crown.glb', import.meta.url).href;
 const gltfLoader = new GLTFLoader();
 
 function loadGLTFScene(path) {
@@ -92,6 +100,7 @@ function loadGLTFScene(path) {
 // ── ①戴冠(5秒): crown.glbがバナナの上空からtweenで落下し、着地する ─────
 const CORONATION_TEXT = 'I wanted to speak between any two points by way of a foolish circle!';
 const CORONATION_DURATION = 10.0;             // ①戴冠にかける秒数
+const CORONATION_WORK = 'Metaphony';          // 出典(右下の共有出典ボックスに、セリフと同じ間だけ表示)
 // ★ 2026-09-19 追加(ご指示反映):「銀河を二倍にする」への対応。carousel側を縮める
 //   方式(main.js側で廃止済み)ではなく、銀河自体をこの倍率まで拡大する方針にした。
 //   戴冠演出のリング拡大(growCrossfadeRing)と同時にtweenする(下記参照)。
@@ -101,7 +110,7 @@ const GALAXY_OVERVIEW_SCALE = 2;
 const CROWN_DROP_START_HEIGHT = AXIS_LENGTH * 3;
 // ★ 2026-09-29 追加(ご指示反映): 「着地位置も5くらい上げて」への対応。
 //   着地y = バナナの上に軽く乗る高さ(BANANA_RADIUS * 0.6)+ この分だけ底上げする。
-const CROWN_LANDING_HEIGHT_BOOST = -0.5;
+const CROWN_LANDING_HEIGHT_BOOST = -1.5;
 const CROWN_SCALE = 0.2; // 仮値。実際のcrown.glbのサイズを見て調整してください
 let coronationCaption = null; // 遅延生成(#axisHint等とは別の、画面下75%専用の要素)
 
@@ -166,10 +175,29 @@ const BULGE_CORE_COLOR = 0xfff6c9;          // バー本体よりやや明るい
 //     (BULGE_BLOOM_INTENSITYを0.15→0.06に弱めた件)は、粒自体が縮小されたことで
 //     にじみの絶対量も下がっているはずだが、値は前回のまま残してある。見ながら
 //     必要なら調整してください。
-const BULGE_BLOOM_INTENSITY = 0.06;         // 0〜1。Bloomの強さを弱める(0=完全オフ、1=通常と同じ強さ。仮値)
+const BULGE_BLOOM_INTENSITY = 0.25;         // 0〜1。Bloomの強さ(0=完全オフ、1=通常と同じ強さ。仮値)
 const BULGE_PARTICLE_COUNT = 6000;          // 900→6000(仮値。粒を小さくした分、密度で光の塊に見せる)
-const BULGE_BAR_POINT_SIZE = BULGE_BAR_HALF_LENGTH * 0.022;  // 以前の0.12から大幅に縮小(仮値)
-const BULGE_CORE_POINT_SIZE = BULGE_BAR_HALF_LENGTH * 0.016; // 以前の0.09から大幅に縮小(仮値)
+// ★ 2026-10-11 修正(ご指摘反映): 「バルジの粒が銀河の粒より小さい/暗い」の本当の原因。
+//   銀河の粒は「カメラ距離10倍化を打ち消すため」GALAXY_POINT_SIZE=680という大きなuSizeを
+//   使っている(シェーダーが粒サイズを 1/視点距離 で縮めるため)。一方バルジのuSizeは
+//   BULGE_BAR_HALF_LENGTH×0.04(≒20前後)のままで、同じシェーダー・同じ距離なのに
+//   画面上で銀河の粒の30分の1ほどにしかならなかった(前回サイズを少し変えても
+//   見た目が変わらなかったのはこのため)。
+//   → バルジの粒サイズは銀河の基準(GALAXY_POINT_SIZE)に対する比率で決める。
+//   1.0なら銀河の粒と同じ大きさ。バーとコアを別々に調整できる。
+const BULGE_BAR_SIZE_RATIO = 1.0;   // バーの粒サイズ = GALAXY_POINT_SIZE × この比率(仮値)
+const BULGE_CORE_SIZE_RATIO = 0.8;  // コアの粒サイズ(バーより少し小さく、密集させて光の塊に見せる。仮値)
+const BULGE_BAR_POINT_SIZE = GALAXY_POINT_SIZE * BULGE_BAR_SIZE_RATIO;
+const BULGE_CORE_POINT_SIZE = GALAXY_POINT_SIZE * BULGE_CORE_SIZE_RATIO;
+// ★ バルジの明るさ(色に掛ける倍率。1=そのまま、小さいほど暗い)。銀河側の明るさ
+//   (galaxy.jsのGALAXY_BRIGHTNESS)とは独立した値で、バルジだけを単独で調整できる。
+//   銀河を暗くしたぶん、初期値は同じ0.6にそろえてある(仮値)。実行中に変えたいときは
+//   setBulgeBrightness()を使う。
+const BULGE_BRIGHTNESS = 0.6;
+// 粒ごとの大きさのばらつきの下限と、縁の粒がどれだけ縮むか。銀河(galaxy.js)と同じ値
+// (ばらつき0.3〜1.0、縁の縮み0.55)にして、粒の大きさの分布も揃える。
+const BULGE_SIZE_JITTER_MIN = 0.3;
+const BULGE_EDGE_SHRINK = 0.55;
 // 画面上の最大サイズ(px)。sizeAttenuationはシェーダー側で常に効くが、極端接近時の
 // 保険としてクランプする(仮値。frontend次第でuPixelRatio込みなのでpx基準)。
 const BULGE_MAX_PIXEL_SIZE = 48;
@@ -279,8 +307,8 @@ function makeBulgePlaceholder() {
     const relRadius = Math.min(Math.hypot(p.x, p.y, p.z) / BULGE_BAR_HALF_LENGTH, 1);
     const edge = 1 - edgeSmoothstep(1 - BULGE_EDGE_FADE, 1, relRadius);
     barAlphas[i] = edge;
-    const sizeJitter = Math.random() * 0.7 + 0.3;
-    barScales[i] = sizeJitter * (1 - 0.5 * (1 - edge));
+    const sizeJitter = BULGE_SIZE_JITTER_MIN + Math.random() * (1 - BULGE_SIZE_JITTER_MIN);
+    barScales[i] = sizeJitter * (1 - BULGE_EDGE_SHRINK * (1 - edge));
   }
   const barGeo = new THREE.BufferGeometry();
   barGeo.setAttribute('position', new THREE.BufferAttribute(barPositions, 3));
@@ -295,6 +323,7 @@ function makeBulgePlaceholder() {
     nearFadeStart: BULGE_NEAR_FADE_START,
     nearFadeRange: BULGE_NEAR_FADE_RANGE,
     maxPixelSize: BULGE_MAX_PIXEL_SIZE,
+    brightness: BULGE_BRIGHTNESS,
   });
   barMat.uniforms.uAlpha.value = 0; // フェードイン前は非表示(startBulgeRevealが0→1にtween)
   const barPoints = new THREE.Points(barGeo, barMat);
@@ -317,8 +346,8 @@ function makeBulgePlaceholder() {
     const relRadius = Math.min(Math.hypot(p.x, p.y, p.z) / coreRadius, 1);
     const edge = 1 - edgeSmoothstep(1 - BULGE_EDGE_FADE, 1, relRadius);
     coreAlphas[i] = edge;
-    const sizeJitter = Math.random() * 0.7 + 0.3;
-    coreScales[i] = sizeJitter * (1 - 0.5 * (1 - edge));
+    const sizeJitter = BULGE_SIZE_JITTER_MIN + Math.random() * (1 - BULGE_SIZE_JITTER_MIN);
+    coreScales[i] = sizeJitter * (1 - BULGE_EDGE_SHRINK * (1 - edge));
   }
   const coreGeo = new THREE.BufferGeometry();
   coreGeo.setAttribute('position', new THREE.BufferAttribute(corePositions, 3));
@@ -331,6 +360,7 @@ function makeBulgePlaceholder() {
     nearFadeStart: BULGE_NEAR_FADE_START,
     nearFadeRange: BULGE_NEAR_FADE_RANGE,
     maxPixelSize: BULGE_MAX_PIXEL_SIZE,
+    brightness: BULGE_BRIGHTNESS,
   });
   coreMat.uniforms.uAlpha.value = 0;
   const corePoints = new THREE.Points(coreGeo, coreMat);
@@ -349,6 +379,48 @@ function makeBulgePlaceholder() {
   return group;
 }
 
+// バルジの明るさ(色の倍率)を実行中に変える。銀河の明るさ(galaxy.jsのsetGalaxyBrightness)とは
+// 独立。1=そのまま、小さいほど暗い。
+export function setBulgeBrightness(record, value) {
+  record.bulge.userData.materials.forEach((m) => { m.uniforms.uBrightness.value = value; });
+}
+
+// ══════════════════════════════════════════════════════════════
+// ▼▼▼ starburst(銀河上の星): クリックで銀河が育つ ▼▼▼
+// ══════════════════════════════════════════════════════════════
+// ★ 2026-10-11 追加(ご指示反映): 「starburstの登場はトーンアームクリック後。starburstをクリックすると
+//   音符がカメラ側から飛んできて粒子に変わり、銀河の一部になる」。
+//   starburst自体はmain.js側が持っているオブジェクトなので、main.jsが生成直後に
+//   bindStarburst(record, starburstObject)で渡す。登場(visible=true)はこのファイルが、
+//   トーンアームを置き終えた瞬間にrevealStarburstで行う(それまでは非表示に保つ)。
+//   ★ main.js側は「銀河俯瞰になったらstarburstをvisible=trueにする」処理を外してください
+//     (残っていると、トーンアームより前に出てしまいます)。
+const STARBURST_HIT_ANGLE_DEG = 2.5; // クリック判定の大きさ。カメラから見た角度(距離や画角が変わっても同じ見かけの大きさ)
+
+export function bindStarburst(record, object3D) {
+  if (!record) return;
+  record.starburst = object3D;
+  if (object3D) object3D.visible = record.starburstRevealed; // 登場前は必ず非表示
+}
+
+function revealStarburst(record) {
+  record.starburstRevealed = true;
+  if (record.starburst) record.starburst.visible = true;
+  // 「I'm saving them.」はstarburstをクリックしたときに出す(galaxyGrowth.jsのplayGalaxyContribution)。
+  // ここ(トーンアームを置き終えた登場時点)では出さない。
+}
+
+function hitsStarburst(record, raycaster) {
+  const starburst = record.starburst;
+  if (!starburst || !starburst.visible || !record.starburstRevealed) return false;
+  // 小さな星(Points等)はRaycasterのintersectObjectでは当たりにくいので、
+  // 「視線(レイ)と星の中心との距離」が、カメラから見て一定の角度以内かどうかで判定する。
+  const position = starburst.getWorldPosition(new THREE.Vector3());
+  const distance = record.camera.position.distanceTo(position);
+  const tolerance = distance * Math.tan(THREE.MathUtils.degToRad(STARBURST_HIT_ANGLE_DEG));
+  return raycaster.ray.distanceToPoint(position) < tolerance;
+}
+
 // ══════════════════════════════════════════════════════════════
 // ▼▼▼ ①戴冠 → ②バルジ出現 → ③太陽系(8惑星)出現 ▼▼▼
 // ══════════════════════════════════════════════════════════════
@@ -365,32 +437,28 @@ function makeBulgePlaceholder() {
 //   ★ 暫定措置: 新しいトーンアームができるまでの間、バルジのフェードインが終わった
 //     直後にrevealSolarSystem(record)を直接呼び、太陽系が即座に召喚されるように
 //     してある(startBulgeReveal内を参照)。
-const RING_CONTACT_RADIUS = ORBIT_RADIUS_BASE; // 太陽系の主軌道半径として召喚する半径(仮値。ゴールドリングの実寸に合わせて調整)
-const SOLAR_SYSTEM_GROW_DURATION = 3.2; // ③太陽系がリング半径から本来の大きさへ広がる秒数(仮値)
-
-// 金のリング(crossfadeRing。バナナと同じ高さで拡大する戴冠演出用リング)の「半径」との
-// 接触判定用。crossfadeRingはXZ中心が原点なので、
-// ここでは「対象(太陽/将来のトーンアーム接触点)の現在半径(=galaxyCenterからの
-// XZ距離)」がRING_CONTACT_RADIUS以下になったかどうかだけを見ればよい
-// (真上から見た接触判定)。トーンアーム自体の見た目が変わっても、この関数自体は
-// そのまま使える汎用の判定なので残してある。
-function hasTouchedGoldenRing(currentRadius) {
-  return currentRadius <= RING_CONTACT_RADIUS;
-}
 
 // ③本編: リングに接触した(=今は暫定的に、バルジ出現直後に即時呼ばれる)ら太陽系を召喚する。
 // トーンアーム実装後は、トーンアームが盤面に接触したタイミングでこの関数を呼ぶだけでよい。
 function revealSolarSystem(record) {
-  const { solarSystem, galaxyCenter } = record;
-  // ▼ 太陽系(8惑星)の召喚: リング接触とみなす半径(RING_CONTACT_RADIUS)からスタートし、
-  //   本来の大きさまで広がる。
-  setOrbitCenter(solarSystem, galaxyCenter);
-  setOrbitRadius(solarSystem, RING_CONTACT_RADIUS);
-  solarSystem.group.visible = true;
-  solarSystem.sunTrailRecording = true; // 太陽自身の軌跡もこの瞬間から記録開始
-  solarSystem.sunTrailLastRecorded = -Infinity;
-  growOrbitToFull(solarSystem, { duration: SOLAR_SYSTEM_GROW_DURATION });
-  // ▲ ここまで
+  const { solarSystem, galaxy, crossfadeRing } = record;
+  // 軌道の中心: 水平位置(x,z)は銀河の現在位置、高さ(y)は今見えている金のリング
+  // (crossfadeRing。バナナと同じ高さ=数式と同じ高さ)に合わせる。
+  const orbitCenter = new THREE.Vector3();
+  galaxy.starsGroup.getWorldPosition(orbitCenter);
+  const galaxyY = orbitCenter.y;
+  crossfadeRing.updateWorldMatrix(true, false);
+  orbitCenter.y = new THREE.Vector3().setFromMatrixPosition(crossfadeRing.matrixWorld).y;
+  // 高さの確認用ログ: 数式(RECORD_ANCHOR)・リング(=軌道の中心)・バナナ・銀河が揃っているか。
+  // 揃っていなければ警告を出す(銀河だけズレている場合は、銀河側の配置を直す必要がある)。
+  const bananaY = record.bananaMesh.getWorldPosition(new THREE.Vector3()).y;
+  console.log('[revealSolarSystem] 高さ 数式:', RECORD_ANCHOR.y, '/ リング(軌道):', orbitCenter.y,
+    '/ バナナ:', bananaY, '/ 銀河:', galaxyY);
+  if (Math.abs(galaxyY - orbitCenter.y) > 0.01) {
+    console.warn('[revealSolarSystem] 銀河の高さがリング(軌道)とずれています:', galaxyY - orbitCenter.y);
+  }
+  // 太陽系を召喚する。軌道の半径は拡大リング(growCrossfadeRingの目標=ORBIT_RADIUS_BASE)と同じ。
+  startSolarSystem(solarSystem, orbitCenter);
   // ★ 2026-09-17 再訂正(ご指摘反映): 「太陽が到達して消える金のリング」は、
   //   もともと上(バナナと同じ高さ)にあるcrossfadeRing自身(=拡大したリングその
   //   もの)。新設した別リングではない。crossfadeRingはcarousel本来のリング
@@ -428,9 +496,10 @@ function playCoronationSequence(record) {
   crownGroup.position.copy(bananaMesh.position).add(new THREE.Vector3(0, CROWN_DROP_START_HEIGHT, 0));
   crownGroup.visible = true;
   caption.setText(CORONATION_TEXT);
+  getSourceCaption().setText(CORONATION_WORK);
   // ★ ご指摘反映: テキスト表示と同時に、バナナと同じ高さにある既存のリング
   //   (crossfadeRing)自身を「太陽系のらせん軌道(=ORBIT_RADIUS_BASE。
-  //   revealSolarSystem側が太陽系召喚に使うRING_CONTACT_RADIUSと同じ値)」の
+  //   revealSolarSystem側が太陽系の主軌道に使う半径と同じ値)」の
   //   サイズまで拡大しておく。新しいリングを追加で発生させるのではなく、この
   //   もとからあるリング自身を拡大する。太陽系が実際に召喚された時点
   //   (revealSolarSystem内)で、この拡大したリングを消す。
@@ -474,6 +543,7 @@ function playCoronationSequence(record) {
 
   setTimeout(() => {
     caption.hide();
+    getSourceCaption().hide();
     startBulgeReveal();
   }, CORONATION_DURATION * 1000);
 
@@ -945,6 +1015,8 @@ function placeTonearmOnRecord(record) {
       setGalaxyDifferentialRotation(record.galaxy, false);
       // ★ 追加: アームが置き終わってから2秒後に、ラッパ(Metaphonyホーン)を発動する。
       gsap.delayedCall(TRUMPET_DELAY_SECONDS, () => triggerTrumpet(record));
+      // ★ 追加(2026-10-11): トーンアームを置き終えたら、starburstが登場する(クリックで銀河が育つ)。
+      revealStarburst(record);
     },
   });
 }
@@ -1355,6 +1427,10 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   bulgeStar.scale.setScalar(BULGE_BAR_HALF_LENGTH * BULGE_STAR_SIZE_RATIO / GALAXY_OVERVIEW_SCALE);
   bulgeStar.visible = false;
 
+  // ★ 2026-10-11 追加(ご指示反映): 銀河の「育ち」。腕3本・粒子1/3から始まり、starburstをクリック
+  //   するたびに音符→粒子の演出とともに育つ(galaxyGrowth.js。保存済みの育ちはここで反映される)。
+  const growth = createGalaxyGrowth(scene, galaxy, camera);
+
   mirrorVisualAnchor.position.copy(computeMirrorGroupPosition());
   mirrorVisualAnchor.visible = false; // 表示はtripodRingSwap.js側が一元管理する(swapT>=1で表示に切り替わる)
   scene.add(mirrorVisualAnchor);
@@ -1410,7 +1486,8 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
     mirrorGroup, mirrorVisualAnchor, mirrorVisualHome: mirrorVisualAnchor.position.clone(),
     crossfadeRing,
     pyramidMesh, bananaMesh, crownGroup, bulge, bulgeStar, tonearm, trumpetGroup, trumpetApi,
-    galaxyCenter: galaxy.starsGroup.position.clone(), // ← 太陽系召喚時の中心(銀河の中心。生成時点で固定)
+    growth, starburst: null, starburstRevealed: false,
+    galaxyCenter: galaxy.starsGroup.position.clone(), // ← 銀河の中心(生成時点で固定。針・ラッパの基準。太陽系の中心はrevealSolarSystemで別途求める)
     coronationStarted: false, // ← バナナクリック演出の二重発火防止
     // ★ 2026-09-16 追加(バグ修正): 「バルジが出現していない」への対応。戴冠演出中、
     //   スクロールが(何らかの理由で)後方向に動くと、tripodRingSwap.js側の
@@ -1445,6 +1522,9 @@ export function startRecordDisplay(record) {
   if (!record || record.phase !== 'inactive') return;
   record.mirrorGroup.visible = true;
   record.phase = 'mirror';
+  // 銀河の育ち(サイト全体の累計)の最新値をサーバーから取る。宇宙ページに入った人だけが通る
+  // 場所なので、ページを開いただけの人はサーバーを使わない(無料枠を節約するため)。
+  refreshGalaxyGrowth(record.growth);
 }
 
 // ホイールイベントのたびに呼ぶ: scrollYは0〜SCROLL_MAXにクランプ済みの累積スクロール量
@@ -1481,6 +1561,10 @@ export function tryRecordClick(record, raycaster, { onNavigate } = {}) {
       return true;
     }
   }
+
+  // starburst: トーンアームを置いたあとに登場する星。クリックで銀河が育つ演出を始める。
+  // (今回の訪問で育てられる回数を使い切っていたら、何も起きずにfalseを返す=クリックは他へ通す)
+  if (hitsStarburst(record, raycaster) && playGalaxyContribution(record.growth)) return true;
 
   // 鏡: three.jsのRaycasterはvisible=falseでも判定してしまう(明示的にチェックしないと
   // 素通りする)ため、mirrorVisualAnchor.visible(=tripodRingSwap.js側で鏡tripodが実際に
@@ -1519,6 +1603,7 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
 
   // Aスター(バルジ中心)のスターダスト更新。非表示中も、残った粒が消えるまで更新が必要。
   if (record.bulgeStar) record.bulgeStar.userData.update(deltaSeconds, record.camera);
+  if (record.growth) updateGalaxyGrowth(record.growth, deltaSeconds);
 
   if (record.trumpetApi) {
     trumpetElapsedAccumulator += deltaSeconds;
@@ -1618,7 +1703,7 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
 
 // TODO:
 //   - SCROLL_SWITCH / SCROLL_PULLBACK_RANGE / VIEW_MIX_SMOOTHING / MIRROR_ENV_RESOLUTION /
-//     BANANA_HEIGHT_ABOVE_APEX / RECORD_PULLBACK_DISTANCE / PULLBACK_SMOOTHING は仮値です。
+//     RECORD_PULLBACK_DISTANCE / PULLBACK_SMOOTHING は仮値です。
 //   - MIRROR_TARGET_PAGE('prism2.html'): 実際の配置パスに合わせて調整してください。
 //   - トーンアーム(旧・針)は2026-09-17に全削除し、今後新しく作り直す予定です。
 //     再実装する際は、盤面に接触したタイミングでrevealSolarSystem(record)を呼ぶ形に
