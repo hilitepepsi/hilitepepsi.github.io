@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>POLYPHONY SPACE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f6f3ea; --paper-edge:#e6dfcb; --ink:#1c1b1f; --ink-soft:rgba(28,27,31,.6); --rule:rgba(28,27,31,.25);
+  --serif:'EB Garamond',Garamond,'Iowan Old Style',Georgia,serif;
+  color-scheme:light; box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--serif);overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .35  0 0 0 0 .3  0 0 0 0 .2  0 0 0 .09 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),radial-gradient(ellipse at center,var(--paper) 55%,var(--paper-edge) 100%)}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:ns-resize}
+canvas.drag{cursor:grabbing}
+header{position:fixed;left:clamp(16px,3vw,40px);top:calc(env(safe-area-inset-top,0px) + clamp(14px,3vw,34px));pointer-events:none}
+h1{margin:0;font-weight:500;font-size:clamp(20px,3.4vw,38px);letter-spacing:.32em;line-height:1}
+header p{margin:.7em 0 0;font-style:italic;font-size:clamp(12px,1.5vw,15px);color:var(--ink-soft)}
+.count{position:fixed;right:clamp(16px,3vw,40px);top:calc(env(safe-area-inset-top,0px) + clamp(16px,3vw,36px));font-size:13px;color:var(--ink-soft);text-align:right;line-height:1.5;pointer-events:none}
+footer{position:fixed;left:0;right:0;bottom:0;padding:12px clamp(16px,3vw,40px) calc(env(safe-area-inset-bottom,0px) + 14px);display:flex;flex-direction:column;align-items:center;gap:10px}
+#cap{min-height:1.7em;font-size:clamp(15px,1.9vw,19px);text-align:center;max-width:min(640px,100%);pointer-events:none}
+#cap.hint{font-size:12px;font-style:italic;color:var(--ink-soft)}
+.add{display:flex;gap:8px;width:min(540px,100%)}
+.add input{flex:1;min-width:0;font:400 16px var(--serif);padding:8px 12px;background:rgba(255,255,255,.55);border:1px solid var(--rule);border-radius:2px;color:var(--ink);user-select:text;-webkit-user-select:text}
+.add input:focus{outline:2px solid var(--ink);outline-offset:1px}
+.add button{font:500 15px var(--serif);letter-spacing:.1em;padding:8px 16px;background:var(--ink);color:var(--paper);border:0;border-radius:2px;cursor:pointer}
+.add button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.knobs{position:fixed;left:clamp(16px,3vw,40px);bottom:calc(env(safe-area-inset-bottom,0px) + 18px);display:flex;gap:14px}
+.knob{width:86px;text-align:center;font-size:13px;font-style:italic;color:var(--ink-soft);cursor:ns-resize;touch-action:none;outline:none;border-radius:50%}
+.knob svg{width:86px;height:86px;display:block;filter:drop-shadow(0 2px 2px rgba(0,0,0,.18))}
+.knob:focus-visible svg{outline:2px solid var(--ink);outline-offset:2px;border-radius:50%}
+.knob output{display:block;margin-top:2px;font-style:normal;font-size:12px}
+@media (max-width:700px){.knobs{bottom:calc(env(safe-area-inset-bottom,0px) + 112px)}}
+</style>
+</head>
+<body>
+<canvas id="cv" aria-label="A galaxy of visitor comments. Each comment is a string of particles along a spiral arm; zoom in and the particles become letters."></canvas>
+<header>
+  <h1>POLYPHONY SPACE</h1>
+  <p>One star, one voice. Zoom in and the stars become words.</p>
+</header>
+<input id="tilt" type="range" min="6" max="90" step="any" value="58" hidden>
+<div class="count"><span id="n"></span> voices<br><span id="zl"></span></div>
+<footer>
+  <div id="cap" class="hint">Drag the knobs up or down for height and zoom &middot; right-drag to look around</div>
+  <div class="add"><input id="inp" maxlength="60" placeholder="Leave a few words (prototype: shown on this screen only)" aria-label="Your comment"><button id="btn">Light a star</button></div>
+</footer>
+<div class="knobs">
+  <div class="knob" id="kH" tabindex="0" role="slider" aria-label="Camera height" aria-valuemin="6" aria-valuemax="90"><svg viewBox="-50 -50 100 100"></svg>Height<output></output></div>
+  <div class="knob" id="kZ" tabindex="0" role="slider" aria-label="Zoom" aria-valuemin="1" aria-valuemax="140"><svg viewBox="-50 -50 100 100"></svg>Zoom<output></output></div>
+</div>
+<script>
+(function(){
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const FONT="'EB Garamond',Garamond,'Iowan Old Style',Georgia,serif";
+const SAMPLES=[
+"I found someone's bookmark in the library at night.","The last page was warmer than the first.","There is a book I never want to finish.","Somebody, somewhere, is humming this too.",
+"I love the sound of a needle on a rainy day.","I keep the receipt as a bookmark.","Old paper smells like memory.","The moon was strangely large on the way home.",
+"Leaving what I could not say right here.","Small lights, far apart, still make a sentence.","My cat is asleep on my lap, so I cannot move.","We were all chapters once.",
+"One line on the morning train saved my day.","Please let the quiet ones be heard.","A forgotten song came back to me today.","A margin is where the reader lives.",
+"I stayed inside the story until the coffee went cold.","Not every star needs a name.","Thank you. That is all.","Turn the page slowly; it remembers.",
+"I am looking at the same sky as a stranger.","I wrote this on the back of a ticket.","A constellation is the story of whoever drew the lines.","Somewhere a needle drops, softly.",
+"Life feels like a long collection of short stories.","Read me when the lights are low.","Say your favourite word three times.","Let this one be the quiet chorus.",
+"Coming here, I could breathe a little.","The dust jacket never fits the book.","A window seat in a library at summer's end.","Hello to whoever finds this star.",
+"A treasure from the bargain shelf.","Even silence has a harmony.","Tomorrow I want to be a little kinder.","Ink dries; the voice stays wet.","Hi.","Stay.","Still here.","Read slowly."
+];
+const INK='#1c1b1f',PAL=['#c0392b','#d98a1f','#2a6fb0','#2a8f7a','#7a4fa3','#d64f7a'];
+let seed=11;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+const gauss=()=>(rnd()+rnd()+rnd()-1.5)/1.5;
+const NC=1200,ARMS=3,B=0.28,DS=0.0035,DR=DS/Math.sqrt(1+1/(B*B));
+const cm=[];             // comments: {txt,col,start,end,sx,sy,sz,born}
+const LX=[],LY=[],LH=[],LC=[],LJ=[],LCH=[]; // letter particles
+function addComment(txt,r,th0,h,col){
+  const c={txt,col,start:LX.length,end:0,sx:0,sy:0,sz:0.9+rnd()*0.9,born:-1,vis:false};
+  const id=cm.length;
+  for(let j=0;j<txt.length;j++){
+    const ch=txt[j];if(ch===' ')continue;
+    const rj=r-j*DR,th=th0+Math.log(rj/r)/B;
+    LX.push(rj*Math.cos(th));LY.push(rj*Math.sin(th));LH.push(h);LC.push(id);LJ.push(j);LCH.push(ch);
+  }
+  c.end=LX.length;cm.push(c);
+}
+for(let i=0;i<NC;i++){
+  const f=i/NC,r=0.17+0.83*Math.sqrt(f),arm=i%ARMS;
+  const th0=Math.log(r/0.1)/B+arm*2*Math.PI/ARMS+gauss()*(0.32-0.2*r);
+  const h=gauss()*(0.01+0.06*Math.pow(1-r,2));
+  addComment(SAMPLES[Math.floor(rnd()*SAMPLES.length)],r,th0,h,PAL[Math.floor(rnd()*PAL.length)]);
+}
+const nEl=document.getElementById('n'),zl=document.getElementById('zl'),cap=document.getElementById('cap'),tilt=document.getElementById('tilt');
+nEl.textContent=cm.length.toLocaleString();
+let W=0,H=0,dpr=1,base=1,z=1,cx=0,cy=0,Phi=0,mx=-999,my=-999,hover=-1,tPrev=0;
+const HINT='Drag the knobs up or down for height and zoom \u00b7 right-drag to look around';
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr;base=Math.min(W,H)*0.44}
+addEventListener('resize',resize);resize();
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function limit(){const m=1.2;cx=clamp(cx,-m,m);cy=clamp(cy,-m,m);if(z<=1.001){cx*=.8;cy*=.8}}
+function zoomAt(f,px,py){
+  const nz=clamp(z*f,1,140),wx=cx+(px-W/2)/(base*z),wy=cy+(py-H/2)/(base*z);
+  z=nz;cx=wx-(px-W/2)/(base*z);cy=wy-(py-H/2)/(base*z);limit();
+}
+cv.addEventListener('wheel',e=>{e.preventDefault();zoomAt(Math.exp(-e.deltaY*0.0016),W/2,H/2)},{passive:false});
+const ptrs=new Map();let pinch=0,lastMid=null;
+const isPan=()=>ptrs.size>=2||[...ptrs.values()].some(p=>p.pan);
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY,pan:e.button===2});mx=e.clientX;my=e.clientY;cv.classList.add('drag');
+  if(ptrs.size==2){const[a,b]=[...ptrs.values()];pinch=Math.hypot(a.x-b.x,a.y-b.y);lastMid={x:(a.x+b.x)/2,y:(a.y+b.y)/2}}});
+cv.addEventListener('pointermove',e=>{
+  mx=e.clientX;my=e.clientY;const p=ptrs.get(e.pointerId);if(!p)return;
+  const dx=e.clientX-p.x,dy=e.clientY-p.y;
+  if(ptrs.size==1){
+    if(p.pan){cx-=dx/(base*z);cy-=dy/(base*z);limit()}
+    else{tilt.value=clamp(+tilt.value+dy*0.35,+tilt.min,+tilt.max)}
+  }
+  p.x=e.clientX;p.y=e.clientY;
+  if(ptrs.size==2){
+    const[a,b]=[...ptrs.values()],d=Math.hypot(a.x-b.x,a.y-b.y),m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    if(pinch)zoomAt(d/pinch,W/2,H/2);pinch=d;
+    if(lastMid){cx-=(m.x-lastMid.x)/(base*z);cy-=(m.y-lastMid.y)/(base*z);limit()}
+    lastMid=m;
+  }
+});
+const up=e=>{ptrs.delete(e.pointerId);pinch=0;lastMid=null;if(!ptrs.size)cv.classList.remove('drag')};
+cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+cv.addEventListener('pointerleave',()=>{if(!ptrs.size){mx=-999;my=-999}});
+function add(){
+  const inp=document.getElementById('inp'),t=inp.value.trim();if(!t)return;
+  addComment(t,0.9+Math.random()*0.09,Math.random()*6.283,(Math.random()-.5)*0.02,PAL[Math.floor(Math.random()*PAL.length)]);
+  const c=cm[cm.length-1];c.born=performance.now();c.sz=2.4;
+  inp.value='';nEl.textContent=cm.length.toLocaleString();
+  cap.className='';cap.textContent='A new star is lit. (Prototype: it lives on this screen only.)';
+}
+document.getElementById('btn').onclick=add;
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing)add()});
+
+// record-player knobs
+const kH=document.getElementById('kH'),kZ=document.getElementById('kZ');
+function build(k){
+  const sv=k.querySelector('svg');let h='<circle r="47" fill="#e9e2cf" stroke="rgba(28,27,31,.35)"/>';
+  for(let i=0;i<11;i++){const a=(-135+27*i)*Math.PI/180,r1=i%5==0?39:41,x1=Math.sin(a)*r1,y1=-Math.cos(a)*r1,x2=Math.sin(a)*46,y2=-Math.cos(a)*46;h+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="#1c1b1f" stroke-width="'+(i%5==0?1.6:.8)+'"/>'}
+  h+='<text x="-33" y="42" font-size="12" text-anchor="middle" fill="#1c1b1f">\u2212</text><text x="33" y="42" font-size="12" text-anchor="middle" fill="#1c1b1f">+</text>';
+  h+='<g class="rot"><circle r="30" fill="#1c1b1f"/><circle r="29" fill="none" stroke="#f6f3ea" stroke-opacity=".28" stroke-width="3" stroke-dasharray="1.1 2.3"/><circle r="22" fill="#2c2b31"/><circle r="22" fill="none" stroke="#000" stroke-opacity=".5"/><line x1="0" y1="-8" x2="0" y2="-27" stroke="#f6f3ea" stroke-width="3" stroke-linecap="round"/></g>';
+  sv.innerHTML=h;return sv.querySelector('.rot');
+}
+const rH=build(kH),rZ=build(kZ),oH=kH.querySelector('output'),oZ=kZ.querySelector('output');
+let aH=null,aZ=null;
+const dH=dy=>{tilt.value=clamp(+tilt.value+dy*0.35,+tilt.min,+tilt.max)};
+const dZ=dy=>zoomAt(Math.exp(dy*0.012),W/2,H/2);
+function bindKnob(el,fn,key){
+  let y=null;
+  el.addEventListener('pointerdown',e=>{el.setPointerCapture(e.pointerId);y=e.clientY;e.stopPropagation()});
+  el.addEventListener('pointermove',e=>{if(y===null)return;fn(y-e.clientY);y=e.clientY});
+  const end=()=>{y=null};el.addEventListener('pointerup',end);el.addEventListener('pointercancel',end);
+  el.addEventListener('wheel',e=>{e.preventDefault();fn(-e.deltaY*0.2)},{passive:false});
+  el.addEventListener('keydown',e=>{if(e.key==='ArrowUp'||e.key==='ArrowRight'){fn(6);e.preventDefault()}if(e.key==='ArrowDown'||e.key==='ArrowLeft'){fn(-6);e.preventDefault()}});
+}
+bindKnob(kH,dH);bindKnob(kZ,dZ);
+function spinKnobs(){
+  const tH=-135+270*(tilt.value-tilt.min)/(tilt.max-tilt.min),tZ=-135+270*Math.log(z)/Math.log(140);
+  if(aH===null){aH=tH;aZ=tZ}
+  aH+=(tH-aH)*0.25;aZ+=(tZ-aZ)*0.25;
+  rH.setAttribute('transform','rotate('+aH.toFixed(2)+')');rZ.setAttribute('transform','rotate('+aZ.toFixed(2)+')');
+  oH.textContent=Math.round(tilt.value)+'\u00b0';oZ.textContent='\u00d7'+z.toFixed(1);
+  kH.setAttribute('aria-valuenow',Math.round(tilt.value));kZ.setAttribute('aria-valuenow',z.toFixed(1));
+}
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function frame(t){
+  const dt=Math.min(0.05,(t-tPrev)/1000||0);tPrev=t;
+  if(!isPan()){const k=1-Math.exp(-dt*0.9);cx-=cx*k;cy-=cy*k}
+  if(!reduce)Phi+=dt*0.04/(1+(z-1)*0.8);
+  spinKnobs();
+  const e=tilt.value*Math.PI/180,se=Math.sin(e),ce=Math.cos(e);
+  const cF=Math.cos(Phi),sF=Math.sin(Phi);
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  const sc=base*z,ox=W/2-cx*sc,oy=H/2-cy*sc;
+  // record grooves
+  ctx.lineWidth=0.6;
+  for(let g=0.14,i=0;g<1.06;g+=0.014,i++){
+    ctx.strokeStyle='rgba(28,27,31,'+(i%9==0?0.1:0.04)+')';
+    ctx.beginPath();ctx.ellipse(ox,oy,g*sc,g*sc*se,0,0,6.2832);ctx.stroke();
+  }
+  ctx.strokeStyle='rgba(28,27,31,.3)';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(ox,oy,1.07*sc,1.07*sc*se,0,0,6.2832);ctx.stroke();
+  ctx.fillStyle='rgba(120,90,50,.07)';ctx.beginPath();ctx.ellipse(ox,oy,0.1*sc,0.1*sc*se,0,0,6.2832);ctx.fill();
+  ctx.strokeStyle='rgba(28,27,31,.35)';ctx.stroke();
+  // letter particles
+  const dsPx=DS*sc,aG=clamp((dsPx-4.5)/5,0,1),glyph=aG>0;
+  const dotS=Math.max(1,dsPx*0.32),fs=Math.min(30,dsPx*1.5);
+  ctx.fillStyle=INK;
+  if(glyph){ctx.font=fs+'px '+FONT;ctx.textAlign='center';ctx.textBaseline='middle'}
+  let drawnG=0;const heads=[];
+  const farDim=(1-se)*0.0; // reserved
+  for(let l=0,L=LX.length;l<L;l++){
+    const px=LX[l],py=LY[l],x=px*cF-py*sF,y=px*sF+py*cF;
+    const sx=ox+x*sc,sy=oy+(y*se-LH[l]*ce)*sc;
+    if(sx<-30||sx>W+30||sy<-30||sy>H+30)continue;
+    if(LJ[l]===0||(LJ[l]>0&&cm[LC[l]].start===l)){const c=cm[LC[l]];c.sx=sx;c.sy=sy;heads.push(c);continue}
+    if(glyph&&drawnG<4000){ctx.globalAlpha=aG*0.92;ctx.fillText(LCH[l],sx,sy);drawnG++}
+    if(aG<1){ctx.globalAlpha=0.65*(1-aG);ctx.fillRect(sx-dotS/2,sy-dotS/2,dotS,dotS)}
+  }
+  ctx.globalAlpha=1;
+  // coloured head particles (first letter of each comment)
+  const k=1+0.3*Math.log2(z);let best=-1,bd=20*20;
+  for(const c of heads){
+    const rad=c.sz*k;
+    ctx.fillStyle=c.col;
+    ctx.globalAlpha=.16;ctx.beginPath();ctx.arc(c.sx,c.sy,glyph?Math.max(rad*2,dsPx*.8):rad*3,0,6.2832);ctx.fill();
+    ctx.globalAlpha=1;
+    if(glyph&&aG>0.5){ctx.font='500 '+fs*1.1+'px '+FONT;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(c.txt[0],c.sx,c.sy)}
+    if(!glyph||aG<=0.5){ctx.beginPath();ctx.arc(c.sx,c.sy,rad,0,6.2832);ctx.fill()}
+    if(c.born>0){const age=(t-c.born)/1000;if(age<6){ctx.globalAlpha=1-age/6;ctx.strokeStyle=c.col;ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(c.sx,c.sy,8+age*22,0,6.2832);ctx.stroke();ctx.globalAlpha=1}}
+    const d=(c.sx-mx)*(c.sx-mx)+(c.sy-my)*(c.sy-my);if(d<bd){bd=d;best=cm.indexOf(c)}
+  }
+  if(best!==hover){
+    hover=best;
+    if(best>=0){cap.className='';cap.textContent=cm[best].txt}
+    else{cap.className='hint';cap.textContent=HINT}
+  }
+  if(hover>=0){
+    const c=cm[hover];ctx.fillStyle=c.col;
+    for(let l=c.start;l<c.end;l++){
+      const px=LX[l],py=LY[l],x=px*cF-py*sF,y=px*sF+py*cF;
+      ctx.fillRect(ox+x*sc-1.2,oy+(y*se-LH[l]*ce)*sc-1.2,2.4,2.4);
+    }
+    ctx.strokeStyle=c.col;ctx.lineWidth=1;ctx.beginPath();ctx.arc(c.sx,c.sy,c.sz*k+5,0,6.2832);ctx.stroke();
+  }
+  zl.textContent='\u00d7'+z.toFixed(1);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
