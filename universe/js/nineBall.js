@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createBackButton, createReplayButton } from './iconButton.js';
+import { getSourceCaption } from './captions.js'; // 作品名(出典)は共有の右下ボックスに出す(hotspotsのworkと同じ)
 
 // ── ビリヤード台オーバーレイ(Nine Ball Break Cosmos) ─────────────────────
 // ユーザー提供の参考実装(nine_ball_break_cosmos.html)をほぼそのまま移植したもの。
@@ -430,26 +431,25 @@ export function createNineBall(opts = {}) {
 
   /* ---------------------------------------------------------------
      BALL DIALOGUE — キューボール、および1〜9番ボールをクリックすると
-     セリフが浮かぶ(旧・太陽系の惑星が持っていた引用セリフをこちらへ移設)
+     セリフが浮かぶ
   --------------------------------------------------------------- */
-  // キューボール専用のセリフ(プールそのものについて語る2つの引用)
   const CUE_QUOTES = [
-    'Pool. I’ll have to discuss another time. It wasn’t just a game with us, it was almost a Protestant Reformation.\n—Buddy',
-    'We shot pool before or after almost every important crisis of our young manhood.\n—Buddy',
+    { text: 'Pool. I’ll have to discuss another time. It wasn’t just a game with us, it was almost a Protestant Reformation.\n—Buddy', work: 'Seymour: an Introduction' },
+    { text: 'We shot pool before or after almost every important crisis of our young manhood.\n—Buddy', work: 'Seymour: an introduction' },
   ];
   // 1〜9番ボール用の残り5セット
   const BALL_QUOTES = [
-    ['The Ocean Full of Bowling Balls'],
-    ['opened a heavy metal door that read:\nTO THE POOL.\n—Teddy'],
-    ['But if you get on the other side, where there aren’t any hot-shots, then what’s a game about it?\n—Holden',
-     'Life is a game'],
-     ['I went down near the lagoon and I sort of skipped the quarters and the nickel across it,'],
-    ['He would be all smiles when he heard a responsive click of glass striking glass\n—Buddy',
-     'It never appeared to be clear to him whose winning click it was.\n—Buddy'],
-    ['One of us will be present at the other chap’s departure for various reasons.\n—Seymour'],
-    ['I guess I thought it’d take my mind off getting pneumonia and dying.'],
-    ['A man walks along the beach and unfortunately gets hit in the head by a cocoanut.\n—Teddy'],
-    ['I guess I thought it’d take my mind off getting pneumonia and dying. It didn’t, though.']
+    [{ text: 'The Ocean Full of Bowling Balls', work: '' }],
+    [{ text: 'opened a heavy metal door that read:\nTO THE POOL.\n—Teddy', work: 'Teddy' }],
+    [{ text: 'But if you get on the other side, where there aren’t any hot-shots, then what’s a game about it?\n—Holden', work: 'The Catcher in the Rye' },
+     { text: 'Life is a game', work: 'The Catcher in the Rye' }],
+     [{ text: 'I went down near the lagoon and I sort of skipped the quarters and the nickel across it,', work: 'The Catcher in the Rye' }],
+    [{ text: 'He would be all smiles when he heard a responsive click of glass striking glass\n—Buddy', work: 'Seymour: an Introduction' },
+    ],
+    [{ text: 'One of us will be present at the other chap’s departure for various reasons.\n—Seymour', work: 'Hapworth 16, 1924' }],
+    [{ text: 'It never appeared to be clear to him whose winning click it was.\n—Buddy', work: 'Seymour: an Introduction' }],
+    [{ text: 'A man walks along the beach and unfortunately gets hit in the head by a cocoanut.\n—Teddy', work: 'Teddy' }],
+    [{ text: 'I guess I thought it’d take my mind off getting pneumonia and dying. It didn’t, though.', work: 'The Catcher in the Rye' }]
   ];
   // 1〜9番ボールに、上の5セットを順番に(足りない分は繰り返して)割り当てる
   function quotesForBallNumber(num){
@@ -539,8 +539,12 @@ export function createNineBall(opts = {}) {
   let quoteTimer = null;
   const quoteOffset = new THREE.Vector3(0, 0.55, 0);
 
-  function showBallQuote(text, ballMesh) {
-    ballDialogueEl.textContent = text;
+  function showBallQuote(quote, ballMesh) {
+    const q = typeof quote === 'string' ? { text: quote, work: '' } : quote;
+    ballDialogueEl.textContent = q.text;
+    // 作品名は他の出典と同じ右下の共有ボックスへ(空なら消す)
+    const sourceCaption = getSourceCaption();
+    if (q.work) sourceCaption.setText(q.work); else sourceCaption.hide();
     ballDialogueEl.classList.add('show');
     activeQuoteBall = ballMesh || null;
     updateQuotePosition();
@@ -549,6 +553,7 @@ export function createNineBall(opts = {}) {
     quoteTimer = setTimeout(() => {
       ballDialogueEl.classList.remove('show');
       activeQuoteBall = null;
+      getSourceCaption().hide();
     }, 10000);
   }
 
@@ -761,8 +766,8 @@ export function createNineBall(opts = {}) {
     if (hit) {
       const quotes = hit.object.userData.quotes;
       if (quotes && quotes.length) {
-        const text = quotes[Math.floor(Math.random() * quotes.length)];
-        showBallQuote(text, hit.object);
+        const quote = quotes[Math.floor(Math.random() * quotes.length)];
+        showBallQuote(quote, hit.object);
       }
     }
   });
@@ -835,6 +840,7 @@ export function createNineBall(opts = {}) {
     clearTimeout(quoteTimer);
     ballDialogueEl.classList.remove('show');
     activeQuoteBall = null;
+    getSourceCaption().hide();
     pocketTooltipEl.classList.remove('show');
   }
 
