@@ -42,7 +42,14 @@ import { SUN_ORBIT_PERIOD } from './solarSystem.js';
 //   // galaxy.needleSpinActiveをtrue/falseに切り替えるだけでよい(updateGalaxy側が見る)。
 
 // ── 銀河の形状パラメータ(仮値。見ながら調整してください) ──────────────
-const GALAXY_PARTICLE_COUNT = 80000;
+// ★ 修正(ご指摘反映): 「銀河を10倍にしたら密度が足りなくなった」への対応。面積は
+//   半径の2乗で増えるので、理論上は粒子数も100倍(80,000→800万)必要になる。
+//   ただし差動回転のCPUループをGPUへ移したとはいえ、メモリ(1粒子あたり約60バイトの
+//   attributeなので100倍だと数百MB規模になる)やBloom・加算合成によるフィルレートへの
+//   影響は未知数なので、まずは安全を見て10倍(80,000→800,000)にした。これで足りなければ、
+//   パフォーマンスを見ながらさらに上げてください(GPU側の計算はO(1)なので、CPUループの
+//   ボトルネックはもう心配しなくてよい)。
+const GALAXY_PARTICLE_COUNT = 800000;
 // ── 2026-09-28 追加(ご指摘反映): バルジ周辺の星の密度を上げるための「内側ブースト」粒子 ──
 // 実際の銀河(特に棒渦巻銀河)では、星の面密度は中心ほど高く(円盤はほぼ指数関数的に、
 // バルジ/バーはさらに濃く)、バルジのすぐ外側が「星の少ない空白のリング」になることはない。
@@ -53,14 +60,29 @@ const GALAXY_PARTICLE_COUNT = 80000;
 // 半径分布は「RMINで最も濃く、RMAXへ向けて直線的に0へ」なので、元の円盤とは境目なく繋がる。
 // ※ RMINは、バルジ出現時の穴の半径(record.jsのGALAXY_HOLE_RADIUS。銀河ローカルで
 //    半径の約0.2倍)の少し内側に合わせてある。穴の大きさを変えたらここも合わせてください。
-const GALAXY_INNER_BOOST_COUNT = 12000;
+const GALAXY_INNER_BOOST_COUNT = 120000; // GALAXY_PARTICLE_COUNTと同じ比率(10倍)で増やした
 const GALAXY_INNER_BOOST_RMIN_RATIO = 0.17; // GALAXY_RADIUSに対する比率(仮値)
 const GALAXY_INNER_BOOST_RMAX_RATIO = 0.45; // 同上(仮値)
-const GALAXY_TOTAL_PARTICLE_COUNT = GALAXY_PARTICLE_COUNT + GALAXY_INNER_BOOST_COUNT;
+// 9本すべて揃ったときの合計粒子数(下のGALAXY_ARM_SETS参照。実際に描く数は育ち具合で変わる)。
+const GALAXY_FULL_PARTICLE_COUNT = GALAXY_PARTICLE_COUNT + GALAXY_INNER_BOOST_COUNT;
 export const GALAXY_RADIUS = TRIPOD_RADIUS *80; // 「巨大」なので、tripod・太陽系をまるごと包む規模に(以前の2倍。仮値)
 // ↑ record.js側がNEEDLE_START_RADIUS(針先=太陽の出発点を「銀河の周縁側」に置く)の
 //   計算に参照するためexportした。
-const GALAXY_BRANCHES = 9;          // 渦の腕の本数
+const GALAXY_BRANCHES = 9;          // 渦の腕の本数(最終形。最初に出ているのは下のセット0の3本だけ)
+// ★ 2026-10-11 追加(ご指示反映): 「最初は腕3本・粒子数も1/3。残り6本は将来的に形成」への対応。
+//   腕を3本ずつの「セット」に分け、セット0(=GALAXY_ARM_EMPHASIS_BRANCHESと同じ0,3,6。120°間隔)
+//   だけを最初から描く。セット1・2は、starburstのクリック(record.js/galaxyGrowth.js)が進むたびに
+//   少しずつ粒子が増えて育つ(setGalaxyGrowth)。3本ずつなので、育っている途中でも常に
+//   120°対称の見た目になる。粒子は[セット0の全部][セット1の全部][セット2の全部]の順に
+//   並べてあり、描画範囲(drawRange)を伸ばすだけで増やせる(ジオメトリの作り直しは不要で、
+//   未解禁のセットはGPUの頂点処理自体も走らない)。
+//   セットの中は3本の腕に1粒ずつ順番に割り当てるので、途中まで描いても3本は常に均等。
+const GALAXY_ARM_SETS = [[0, 3, 6], [1, 4, 7], [2, 5, 8]];
+const GALAXY_PARTICLES_PER_SET = Math.round(GALAXY_FULL_PARTICLE_COUNT / GALAXY_ARM_SETS.length);
+const GALAXY_TOTAL_PARTICLE_COUNT = GALAXY_PARTICLES_PER_SET * GALAXY_ARM_SETS.length;
+// 内側ブースト粒(GALAXY_INNER_BOOST_COUNT/全体 = 3/23)を、各セットの中に均等に混ぜる比率。
+const GALAXY_BOOST_CYCLE = 23;
+const GALAXY_BOOST_PER_CYCLE = 3;
 // ★ バグ修正(ご指摘反映): 「銀河を巨大化したら渦の溝構造が見えず均質な円盤になった」
 //   への対応。以前はspinAngle = radius(絶対座標) * GALAXY_SPIN * 0.02 という式で、
 //   半径の「絶対値」に巻き付きが比例していた。GALAXY_RADIUSを10倍にしたことで、
@@ -72,7 +94,9 @@ const GALAXY_BRANCHES = 9;          // 渦の腕の本数
 //   銀河の絶対サイズが変わっても見た目の巻き数が変わらないようにした(下のspinAngleの
 //   計算を参照)。値は旧式でGALAXY_RADIUSが約117.6だった頃の外周でのspinAngle
 //   (117.6 × -6.5 × 0.02 ≈ -15.3)と同じ巻き数になるよう再計算してある。
-const GALAXY_SPIN = -15.3; // 中心→外周の総巻き数(ラジアン)。絶対サイズに依存しない(仮値。見た目を見ながら調整してください)
+// ★ 2026-10-11 変更(ご指示反映): 「粒子数は変えずに、腕の巻き量を半減」。-15.3 → -7.65(約2.4周→約1.2周)。
+//   粒子数(GALAXY_PARTICLE_COUNT等)は触っていない。符号(巻く向き)も同じ。
+const GALAXY_SPIN = -7.65; // 中心→外周の総巻き数(ラジアン)。絶対サイズに依存しない(仮値。見た目を見ながら調整してください)
 const GALAXY_RANDOMNESS = 0.75;     // 腕からのブレの強さ(半径に対する比率)
 const GALAXY_RANDOMNESS_POWER = 4;  // 大きいほど「腕の近くに密集・稀に大きく外れる」分布になる
 const GALAXY_FLATTEN = 0.25;        // 円盤の厚み(Y方向だけXZより浅くする比率)
@@ -85,7 +109,7 @@ const GALAXY_OUTSIDE_COLOR = new THREE.Color(0x3a6fd8); // 外側の腕。寒色
 //   減衰をかけている(遠いほど小さく見える、通常の遠近感)。config.jsのUNIVERSE_CAMERA_
 //   DISTANCEを10倍(1000→10000)にしたため、カメラが銀河から10倍遠くなり、この減衰だけで
 //   星が画面上で約10倍小さく見えるようになっていた。基準サイズ側を10倍にして打ち消す。
-const GALAXY_POINT_SIZE = 680;      // Pointsの基準サイズ(カメラ距離10倍化を打ち消すため、以前の10倍。仮値。uSizeとして渡す)
+export const GALAXY_POINT_SIZE = 680;      // Pointsの基準サイズ(カメラ距離10倍化を打ち消すため、以前の10倍。仮値。uSizeとして渡す)
 // ★ バグ修正(ご指摘反映): 「銀河の星を大きくしたら近くだとまぶしい」への対応。
 //   gl_PointSize *= (1.0 / -viewPosition.z) は距離に反比例するため、基準サイズを
 //   10倍にすると「遠くから見た時に丁度いい」のと同時に「近くで見た時は10倍以上
@@ -98,6 +122,11 @@ const GALAXY_POINT_SIZE = 680;      // Pointsの基準サイズ(カメラ距離1
 //   と同じ仕組みの上限クランプ(uMaxPixelSize)を星にも適用する。遠くの星は元々この上限より
 //   小さいので影響を受けず、近くの星だけが上限で頭打ちになり、まぶしさが抑えられる。
 const GALAXY_MAX_PIXEL_SIZE = 48;   // 画面上の見かけサイズの上限(px)。bulgeのBULGE_MAX_PIXEL_SIZEと同じ値にした(仮値)
+// ★ 2026-10-11 追加(ご指示反映): 「銀河が明るすぎる」への対応。見える側の輝きレイヤー(FRAGMENT_SHADER)の
+//   色に掛ける倍率(1.0=従来通り、小さいほど暗い)。バルジの明るさ(record.jsのBULGE_BRIGHTNESS)とは
+//   独立した値で、どちらも単独で調整できる。実行中に変えたいときはsetGalaxyBrightness()を使う。
+//   鏡用の不透明レイヤー(FRAGMENT_SHADER_OPAQUE)には掛けない(鏡の見え方を変えないため)。
+const GALAXY_BRIGHTNESS = 0.6;      // 仮値。見た目を見ながら調整してください
 
 // ── 2026-09-17 追加: 円盤の境界フェード ────────────────────
 // 外周(および中心に穴をあけたときの内周)を、粒子ごとのalphaで滑らかに減衰させて
@@ -147,17 +176,56 @@ const VERTEX_SHADER = /* glsl */ `
   uniform float uHoleRadius;          // 中心の穴の半径(銀河ローカル)。0=穴なし(setGalaxyHoleでtween)
   uniform float uHoleFade;            // 穴のふちをぼかす幅
   uniform float uBoostAmount;         // 内側ブースト粒(aBoost=1)の表示度合い 0〜1
+  uniform float uSpinExtra;           // 腕の巻きの追加量(ラジアン。外周での追加分。setGalaxyGrowthが設定)
   attribute float aScale;
   attribute float aAlpha;
   attribute float aBaseRadius; // 粒の(ブレを足した)中心からのXZ半径。穴の判定用(静的な値)
   attribute float aBoost;      // 1=内側ブースト粒 / 0=通常の粒(この属性を持たないbulge側は0扱い)
   attribute float aArmWeight; // 0/1: 強調対象の腕(GALAXY_ARM_EMPHASIS_BRANCHES)に属するか
   attribute vec3 aColor;
+  #ifdef ENABLE_DIFF_ROTATION
+    // ★ バグ修正(ご指摘反映): 「銀河俯瞰時の差動回転」は以前、毎フレームJS側でCPUループを
+    //   回してposition属性を書き換えていた(updateGalaxyDifferentialRotation)。粒子数を
+    //   増やすとこのCPUループが真っ先にボトルネックになるため、同じ計算をGPU(ここ)へ移した。
+    //   ジオメトリ生成時に一度だけ計算した「半径・基準角度・ランダムオフセット」を
+    //   attributeとして持たせ、経過時間(uDiffElapsed、CPU側はこの1個のfloatを
+    //   増やすだけ)から、ここで角度・位置を再計算する。bulge側のジオメトリは
+    //   これらのattributeを持たない(=定義しない)ため、ENABLE_DIFF_ROTATIONは
+    //   galaxy本体のマテリアルでだけtrueにする(createStarPointsMaterial参照)。
+    uniform float uDiffActive;  // 0=通常(position属性をそのまま使う) / 1=差動回転を適用
+    uniform float uDiffElapsed; // 差動回転が有効になってからの経過秒数
+    attribute float aDiffRadius;
+    attribute float aDiffBaseAngle;
+    attribute float aDiffRandomX;
+    attribute float aDiffRandomZ;
+  #endif
   varying vec3 vColor;
   varying float vAlpha;
   varying float vColorBoost;
   void main() {
-    vec4 modelPosition = modelMatrix * vec4(position, 1.0);
+    vec3 pos = position;
+    #ifdef ENABLE_DIFF_ROTATION
+      if (uDiffActive > 0.5) {
+        // CPU版(旧updateGalaxyDifferentialRotation)と同じ式: ω(r) = ANGULAR_SPEED * GALAXY_RADIUS / max(r, minRadius)。
+        // ANGULAR_SPEED・GALAXY_RADIUS・GALAXY_DIFF_MIN_RADIUS_RATIO・回転方向の符号は
+        // 実行時に変化しない定数なので、JSの文字列テンプレートでリテラルとして埋め込んでいる
+        // (createStarPointsMaterial呼び出し側を参照)。
+        float minRadius = DIFF_GALAXY_RADIUS * DIFF_MIN_RADIUS_RATIO;
+        float omega = DIFF_ANGULAR_SPEED * (DIFF_GALAXY_RADIUS / max(aDiffRadius, minRadius));
+        float angle = aDiffBaseAngle + DIFF_ROTATION_SIGN * omega * uDiffElapsed;
+        pos.x = cos(angle) * aDiffRadius + aDiffRandomX;
+        pos.z = sin(angle) * aDiffRadius + aDiffRandomZ;
+      }
+    #endif
+    // ★ 2026-10-11 追加: 腕の巻きを増やす(全9本が揃ったあとの育ち方)。半径に比例した角度だけ
+    //   XZ平面で回す(中心は動かず、外周ほど余計に巻く)。通常の位置・差動回転どちらの経路でも効く。
+    if (uSpinExtra != 0.0) {
+      float spinAngle = uSpinExtra * (aBaseRadius / ${GALAXY_RADIUS.toFixed(6)});
+      float spinCos = cos(spinAngle);
+      float spinSin = sin(spinAngle);
+      pos.xz = vec2(spinCos * pos.x - spinSin * pos.z, spinSin * pos.x + spinCos * pos.z);
+    }
+    vec4 modelPosition = modelMatrix * vec4(pos, 1.0);
     vec4 viewPosition = viewMatrix * modelPosition;
     vec4 projectedPosition = projectionMatrix * viewPosition;
     gl_Position = projectedPosition;
@@ -200,6 +268,7 @@ const VERTEX_SHADER = /* glsl */ `
 
 const FRAGMENT_SHADER = /* glsl */ `
   uniform float uAlpha;
+  uniform float uBrightness; // 色に掛ける明るさ(1=そのまま)。銀河とバルジで別々の値を渡す
   varying vec3 vColor;
   varying float vAlpha;
   varying float vColorBoost;
@@ -207,7 +276,7 @@ const FRAGMENT_SHADER = /* glsl */ `
     float strength = distance(gl_PointCoord, vec2(0.5));
     strength = 1.0 - smoothstep(0.0, 0.5, strength);
     if (strength <= 0.0) discard;
-    gl_FragColor = vec4(vColor * vColorBoost, strength * uAlpha * vAlpha);
+    gl_FragColor = vec4(vColor * vColorBoost * uBrightness, strength * uAlpha * vAlpha);
   }
 `;
 
@@ -295,7 +364,10 @@ function buildGalaxyGeometry(innerRadius = 0) {
   for (let i = 0; i < totalCount; i++) {
     const i3 = i * 3;
 
-    const isBoost = i >= GALAXY_PARTICLE_COUNT;
+    // 並び順: [セット0][セット1][セット2]。セット内はk番目の粒子を3本の腕に順番に割り当てる。
+    const setIndex = Math.floor(i / GALAXY_PARTICLES_PER_SET);
+    const k = i - setIndex * GALAXY_PARTICLES_PER_SET;
+    const isBoost = Math.floor(k / 3) % GALAXY_BOOST_CYCLE < GALAXY_BOOST_PER_CYCLE;
     let radius;
     if (isBoost) {
       // 内側ブースト粒: [RMIN, RMAX]で「RMINが最も濃く、RMAXで0へ直線的に減る」分布。
@@ -306,7 +378,7 @@ function buildGalaxyGeometry(innerRadius = 0) {
     } else {
       radius = innerRadius + Math.pow(Math.random(), 0.7) * (GALAXY_RADIUS - innerRadius);
     }
-    const armIndex = i % GALAXY_BRANCHES;
+    const armIndex = GALAXY_ARM_SETS[setIndex][k % 3];
     const branchAngle = (armIndex / GALAXY_BRANCHES) * Math.PI * 2;
     const spinAngle = (radius / GALAXY_RADIUS) * GALAXY_SPIN; // ★ 修正: 絶対半径ではなく正規化半径(0〜1)を使う(銀河のサイズに依存しないように)
 
@@ -368,12 +440,18 @@ function buildGalaxyGeometry(innerRadius = 0) {
   geometry.setAttribute('aArmWeight', new THREE.BufferAttribute(armWeights, 1));
   geometry.setAttribute('aBaseRadius', new THREE.BufferAttribute(baseRadii, 1));
   geometry.setAttribute('aBoost', new THREE.BufferAttribute(boostFlags, 1));
+  // ★ 追加: GPU側差動回転用(VERTEX_SHADER内のENABLE_DIFF_ROTATIONブロック参照)。
+  geometry.setAttribute('aDiffRadius', new THREE.BufferAttribute(diffRadius, 1));
+  geometry.setAttribute('aDiffBaseAngle', new THREE.BufferAttribute(diffBaseAngle, 1));
+  geometry.setAttribute('aDiffRandomX', new THREE.BufferAttribute(diffRandomX, 1));
+  geometry.setAttribute('aDiffRandomZ', new THREE.BufferAttribute(diffRandomZ, 1));
   geometry.userData.diffRotationData = {
     radius: diffRadius,
     baseAngle: diffBaseAngle,
     randomX: diffRandomX,
     randomZ: diffRandomZ,
   };
+  geometry.setDrawRange(0, GALAXY_PARTICLES_PER_SET); // 最初は腕3本ぶん(=粒子数1/3)だけ描く
   return geometry;
 }
 
@@ -396,6 +474,54 @@ export function setGalaxyHole(galaxy, radius, boostAmount = 1) {
   });
 }
 
+// ══ 2026-10-11 追加(ご指示反映): 銀河の「育ち」 ══════════════════════════════
+// 育ち具合は「ステップ数」1つで表す(0=腕3本・粒子1/3。小数でよく、tweenから連続で渡せる)。
+//   0 → FORMATION_STEPS : 残りの6本が、3本ずつ順番に(セット1→セット2)粒子が増えて形成される
+//   FORMATION_STEPS 以降: 9本揃ったあと。1ステップごとに腕の巻きが増えていく(上限あり)
+// starburstをクリックするたび(record.js/galaxyGrowth.js)に1ステップ進める想定。
+const GALAXY_GROWTH_STEPS_PER_SET = 10;   // 腕3本(1セット)を形成し切るのに必要なステップ数(仮値)
+export const GALAXY_GROWTH_FORMATION_STEPS = GALAXY_GROWTH_STEPS_PER_SET * (GALAXY_ARM_SETS.length - 1);
+const GALAXY_EXTRA_SPIN_PER_STEP = Math.abs(GALAXY_SPIN) * 0.05; // 1ステップで基本の巻き量の5%ぶん巻く(仮値)
+const GALAXY_EXTRA_SPIN_MAX_STEPS = 20;   // 巻きを増やすステップの上限(20×5%=基本の2倍まで。仮値)
+export const GALAXY_GROWTH_MAX_STEPS = GALAXY_GROWTH_FORMATION_STEPS + GALAXY_EXTRA_SPIN_MAX_STEPS;
+
+// ステップ数から、描画する粒子数と追加の巻き量(ラジアン)を求める(純粋な計算)。
+export function getGalaxyGrowthLayout(steps) {
+  const s = Math.max(steps, 0);
+  const formation = Math.min(s, GALAXY_GROWTH_FORMATION_STEPS);
+  const extraSteps = Math.min(Math.max(s - GALAXY_GROWTH_FORMATION_STEPS, 0), GALAXY_EXTRA_SPIN_MAX_STEPS);
+  return {
+    drawCount: Math.round(GALAXY_PARTICLES_PER_SET * (1 + formation / GALAXY_GROWTH_STEPS_PER_SET)),
+    extraSpin: Math.sign(GALAXY_SPIN) * extraSteps * GALAXY_EXTRA_SPIN_PER_STEP,
+  };
+}
+
+// 育ち具合を反映する。粒子の描画数(drawRange)とシェーダーのuniformを書き換えるだけなので
+// 毎フレーム(tweenのonUpdate)から呼んでよい。核レイヤーは同じジオメトリを共有しているので一緒に変わる。
+export function setGalaxyGrowth(galaxy, steps) {
+  if (!galaxy || !galaxy.points) return;
+  const { drawCount, extraSpin } = getGalaxyGrowthLayout(steps);
+  galaxy.points.geometry.setDrawRange(0, drawCount);
+  [galaxy.material, galaxy.opaqueMaterial].forEach((m) => {
+    if (m) m.uniforms.uSpinExtra.value = extraSpin;
+  });
+  galaxy.growthSteps = Math.max(steps, 0);
+}
+
+// 今「形成中」の腕(3本)の番号。形成が終わったあとは全9本。演出で「どの腕へ向かうか」に使う。
+export function getGalaxyGrowingArms(steps) {
+  if (steps >= GALAXY_GROWTH_FORMATION_STEPS) return GALAXY_ARM_SETS.flat();
+  return GALAXY_ARM_SETS[1 + Math.floor(Math.max(steps, 0) / GALAXY_GROWTH_STEPS_PER_SET)];
+}
+
+// 腕armIndex上の、中心からの距離の比率(0〜1)の点を、銀河ローカル座標でoutに返す
+// (粒子の生成式と同じ。現在の巻きの追加量も含む)。ブレは含まない「腕の中心線」上の点。
+export function getGalaxyArmPoint(galaxy, armIndex, radiusRatio, out = new THREE.Vector3()) {
+  const { extraSpin } = getGalaxyGrowthLayout(galaxy ? galaxy.growthSteps : 0);
+  const angle = (armIndex / GALAXY_BRANCHES) * Math.PI * 2 + radiusRatio * (GALAXY_SPIN + extraSpin);
+  return out.set(Math.cos(angle) * radiusRatio * GALAXY_RADIUS, 0, Math.sin(angle) * radiusRatio * GALAXY_RADIUS);
+}
+
 // ── 2026-09-16 追加: バルジ出現のタイミングでrecord.js側から呼んでもらい、円盤の
 //    中心にinnerRadius分の穴をあける(=そこから先はバルジが埋める想定)。
 //    ジオメトリを丸ごと作り直して差し替える、簡易な実装(アニメーションなし。
@@ -404,6 +530,7 @@ export function setGalaxyInnerRadius(galaxy, innerRadius) {
   if (!galaxy || !galaxy.points) return;
   const oldGeometry = galaxy.points.geometry; // opaquePointsとも共有している同一インスタンス
   const newGeometry = buildGalaxyGeometry(innerRadius);
+  newGeometry.setDrawRange(0, oldGeometry.drawRange.count); // 育ち具合(描画する粒子数)を引き継ぐ
   galaxy.points.geometry = newGeometry;
   if (galaxy.opaquePoints) galaxy.opaquePoints.geometry = newGeometry; // ← 核レイヤーにも同じジオメトリを張り直す
   oldGeometry.dispose();
@@ -419,6 +546,13 @@ export function setGalaxyArmEmphasis(galaxy, amount) {
   if (galaxy.opaqueMaterial) galaxy.opaqueMaterial.uniforms.uArmEmphasis.value = amount; // 核レイヤーも一緒に強調する
 }
 
+// ── 2026-10-11 追加: 銀河の明るさ(輝きレイヤーの色の倍率)を実行中に変える。1=従来通り。
+//    バルジの明るさはrecord.jsのsetBulgeBrightnessで別に変える(2つは独立)。
+export function setGalaxyBrightness(galaxy, value) {
+  if (!galaxy || !galaxy.material) return;
+  galaxy.material.uniforms.uBrightness.value = value;
+}
+
 // ── 2026-09-17 追加: 銀河・バルジなど「Points+この円形ソフトシェーダー」を使う
 //    描画すべてで共有するマテリアル生成関数。record.js側のバルジも同じ質感
 //    (円形フォールオフ・縁のフェード・近接時のサイズ上限とフェード)を使えるよう
@@ -427,21 +561,34 @@ export function setGalaxyArmEmphasis(galaxy, amount) {
 //   - nearFadeStart/nearFadeRange: この距離(ワールド単位)より近づくとアルファが
 //     落ちて消える。銀河のように常に十分遠い場合は0のままでよい(実質無効)。
 //   - maxPixelSize: 画面上の見かけサイズの上限(px)。0で無効。
+//   - brightness: 色に掛ける明るさ(uBrightness)。1=そのまま。銀河とバルジで別々に渡す。
 export function createStarPointsMaterial({
   size,
   nearFadeStart = 0,
   nearFadeRange = 1,
   maxPixelSize = 0,
+  brightness = 1,
   armThickenStrength = 0,
   armBrightenStrength = 0,
+  enableDiffRotation = false, // ← trueの場合のみ、GPU側差動回転(aDiffRadius等のattribute)を有効にする。bulge側は使わないのでfalseのまま。
 } = {}) {
   return new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
+    // ★ ENABLE_DIFF_ROTATION有効時のみ、差動回転の式に使う定数をシェーダー内リテラルとして
+    //   埋め込む(実行時に変化しない値なのでuniformにせず#defineにしている)。
+    defines: enableDiffRotation ? {
+      ENABLE_DIFF_ROTATION: 1,
+      DIFF_GALAXY_RADIUS: GALAXY_RADIUS.toFixed(6),
+      DIFF_ANGULAR_SPEED: ANGULAR_SPEED.toFixed(8),
+      DIFF_MIN_RADIUS_RATIO: GALAXY_DIFF_MIN_RADIUS_RATIO.toFixed(6),
+      DIFF_ROTATION_SIGN: (-ROTATION_DIRECTION).toFixed(1),
+    } : {},
     uniforms: {
       uSize: { value: size },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
       uAlpha: { value: 1 },
+      uBrightness: { value: brightness },
       uNearFadeStart: { value: nearFadeStart },
       uNearFadeRange: { value: nearFadeRange },
       uMaxPixelSize: { value: maxPixelSize },
@@ -451,6 +598,11 @@ export function createStarPointsMaterial({
       uHoleRadius: { value: 0 },
       uHoleFade: { value: 1 },
       uBoostAmount: { value: 0 },
+      uSpinExtra: { value: 0 },
+      ...(enableDiffRotation ? {
+        uDiffActive: { value: 0 },
+        uDiffElapsed: { value: 0 },
+      } : {}),
     },
     transparent: true,
     depthWrite: false,
@@ -472,10 +624,20 @@ export function createGalaxyOpaqueMaterial({
   maxPixelSize = 0,
   armThickenStrength = 0,
   armBrightenStrength = 0,
+  enableDiffRotation = false, // ★ 追加: 輝きレイヤー側(createStarPointsMaterial)と必ず同じ値を渡すこと。
+  //   同じジオメトリ(=同じaDiffRadius等のattribute)を共有しているので、片方だけ差動回転を
+  //   適用すると、核(opaque)だけが輝きレイヤーから位置的にズレて見えてしまう。
 } = {}) {
   return new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER_OPAQUE,
+    defines: enableDiffRotation ? {
+      ENABLE_DIFF_ROTATION: 1,
+      DIFF_GALAXY_RADIUS: GALAXY_RADIUS.toFixed(6),
+      DIFF_ANGULAR_SPEED: ANGULAR_SPEED.toFixed(8),
+      DIFF_MIN_RADIUS_RATIO: GALAXY_DIFF_MIN_RADIUS_RATIO.toFixed(6),
+      DIFF_ROTATION_SIGN: (-ROTATION_DIRECTION).toFixed(1),
+    } : {},
     uniforms: {
       uSize: { value: size },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
@@ -489,6 +651,11 @@ export function createGalaxyOpaqueMaterial({
       uHoleRadius: { value: 0 },
       uHoleFade: { value: 1 },
       uBoostAmount: { value: 0 },
+      uSpinExtra: { value: 0 },
+      ...(enableDiffRotation ? {
+        uDiffActive: { value: 0 },
+        uDiffElapsed: { value: 0 },
+      } : {}),
     },
     transparent: false,
     depthWrite: true,
@@ -501,6 +668,8 @@ function buildGalaxyMaterial() {
     armThickenStrength: GALAXY_ARM_THICKEN_STRENGTH,
     armBrightenStrength: GALAXY_ARM_BRIGHTEN_STRENGTH,
     maxPixelSize: GALAXY_MAX_PIXEL_SIZE,
+    brightness: GALAXY_BRIGHTNESS,
+    enableDiffRotation: true, // ← 差動回転をGPU側で計算する(詳細はVERTEX_SHADER内コメント参照)
   });
 }
 
@@ -509,6 +678,7 @@ function buildGalaxyOpaqueMaterial() {
     size: GALAXY_OPAQUE_POINT_SIZE,
     armThickenStrength: GALAXY_ARM_THICKEN_STRENGTH, // 輝きレイヤーと同じ比率で太さも連動させる(見た目に出ないサイズだが念のため揃える)
     armBrightenStrength: 0, // このレイヤーの色はもう固定(vColor*0.7)なので、増光側は使わない
+    enableDiffRotation: true, // ★ 追加: 輝きレイヤーと同じジオメトリを共有するので、必ず同じ設定にする
   });
 }
 
@@ -545,17 +715,19 @@ export function createGalaxy(scene, anchor) {
     opaquePoints,   // ← ガラス透過用の不透明レイヤー(setGalaxyInnerRadiusが一緒に張り替える)
     opaqueMaterial,
     state: 'hidden', // 'hidden' → 'idle'
+    growthSteps: 0, // 育ち具合(setGalaxyGrowthが更新)。0=腕3本のみ
     needleSpinActive: false, // ← 旧・針実装が使っていたフラグ(現在は呼び出し元なし。将来の再利用のため残す)
     // ★ 2026-09-18 追加(ご指示反映): 「トーンアームを円盤の外周に置いたら、銀河の
     //   回転を少し上げる」への対応。needleSpinActive(固定でπ rad/秒という大きな
     //   ジャンプ)とは別に、通常速度に対する「掛け算の倍率」だけを持たせておき、
     //   setGalaxySpinBoost()で自由な値に変えられるようにした。
     spinBoost: 1,
-    // ★ 追加: 銀河俯瞰時、アームを置くまでの間だけ「中心に近いほど角速度を速く」
-    //   する差動回転を有効にするためのフラグと、粒子ごとの累積回転角(通常の
-    //   剛体回転=starsGroup.rotateOnWorldAxisとは別に、position属性へ直接焼き込む)。
+    // ★ 修正: 銀河俯瞰時、アームを置くまでの間だけ「中心に近いほど角速度を速く」する
+    //   差動回転を有効にするためのフラグ。角度計算自体はGPU側(VERTEX_SHADER)でやるので、
+    //   CPU側で持つのは経過秒数1個(diffElapsed)だけでよい(以前は粒子ごとの累積回転角を
+    //   Float32Arrayで持っていたが、GPU移行により不要になった)。
     diffRotationActive: false,
-    diffAngleOffset: new Float32Array(GALAXY_TOTAL_PARTICLE_COUNT),
+    diffElapsed: 0,
   };
 }
 
@@ -571,7 +743,15 @@ export function revealGalaxy(galaxy) {
 export function updateGalaxy(galaxy, deltaSeconds) {
   if (!galaxy || galaxy.state === 'hidden') return;
   if (galaxy.diffRotationActive) {
-    updateGalaxyDifferentialRotation(galaxy, deltaSeconds);
+    // ★ バグ修正(ご指摘反映: 粒子を増やすとCPUループが重くなる問題への対応)。
+    //   以前はここで毎フレーム全粒子分のCPUループ(updateGalaxyDifferentialRotation)を
+    //   回してposition属性を直接書き換えていた。粒子数を増やすとこれが真っ先に
+    //   ボトルネックになるため、実際の角度計算はGPU(VERTEX_SHADER内のENABLE_DIFF_
+    //   ROTATIONブロック)へ移し、ここでは経過秒数(uDiffElapsed)を1個のfloatとして
+    //   更新するだけにした(O(1)/フレーム。粒子数に関係なく一定コスト)。
+    galaxy.diffElapsed += deltaSeconds;
+    if (galaxy.material?.uniforms.uDiffElapsed) galaxy.material.uniforms.uDiffElapsed.value = galaxy.diffElapsed;
+    if (galaxy.opaqueMaterial?.uniforms.uDiffElapsed) galaxy.opaqueMaterial.uniforms.uDiffElapsed.value = galaxy.diffElapsed;
     return; // この間は通常の剛体回転(starsGroup全体を一括rotate)はかけない
   }
   const magnitude = galaxy.needleSpinActive ? NEEDLE_SPIN_MAGNITUDE : ANGULAR_SPEED * (galaxy.spinBoost ?? 1);
@@ -580,32 +760,33 @@ export function updateGalaxy(galaxy, deltaSeconds) {
 
 // ── 銀河俯瞰時: 中心に近いほど角速度を速くする差動回転(実際の銀河のイメージ) ──
 // 剛体回転(starsGroup全体を一括rotate)だと全粒子が同じ角速度になってしまうため、
-// この間だけ粒子ごとにradiusに応じた角速度でposition属性を直接書き換える。
+// この間だけ粒子ごとにradiusに応じた角速度で見かけの位置を変える(今はGPU側=
+// VERTEX_SHADER内のENABLE_DIFF_ROTATIONブロックで計算。ここのコメントの式が
+// そのままGLSL側に対応しているので、式を変えるときは両方直すこと)。
 // ω(r) = ANGULAR_SPEED * GALAXY_RADIUS / r としており、外周(r=GALAXY_RADIUS)では通常の
 // ANGULAR_SPEEDに一致し、中心に近づくほど速くなる(実際の銀河の回転曲線がほぼ平坦な
 // ことの簡易的な近似)。中心付近で角速度が発散しないよう下限半径を設けている。
 const GALAXY_DIFF_MIN_RADIUS_RATIO = 0.06; // GALAXY_RADIUSに対する比率(仮値)
-function updateGalaxyDifferentialRotation(galaxy, deltaSeconds) {
+
+// 無効化する瞬間に一度だけ呼ぶ: その時点の(GPU側で計算されていた)見かけの位置を
+// position属性へ実際に書き込み、以後の剛体回転(starsGroup.rotateOnWorldAxis)が
+// 違和感なくそこから続けられるようにする(=CPU版が毎フレームやっていたことの
+// 「最後の1回だけ」を行う。count倍ではなく1回だけなので、粒子数が多くても軽い)。
+function bakeDiffRotationIntoPositions(galaxy) {
   const geometry = galaxy.points.geometry;
   const data = geometry.userData.diffRotationData;
-  if (!data) return; // 念のため(データを持たない古いジオメトリ等)
+  if (!data) return;
   const { radius, baseAngle, randomX, randomZ } = data;
   const positionAttr = geometry.attributes.position;
   const posArray = positionAttr.array;
-  const angleOffset = galaxy.diffAngleOffset;
   const minRadius = GALAXY_RADIUS * GALAXY_DIFF_MIN_RADIUS_RATIO;
+  const elapsed = galaxy.diffElapsed || 0;
   const count = radius.length;
   for (let i = 0; i < count; i++) {
     const r = radius[i];
     const omega = ANGULAR_SPEED * (GALAXY_RADIUS / Math.max(r, minRadius));
-    // ★ 符号に関する注意: rotateOnWorldAxis(Y軸, θ)による剛体回転は、内部的には
-    //   x' = x*cosθ + z*sinθ / z' = -x*sinθ + z*cosθ という変換であり、これは
-    //   ここで使っている極座標表現(x=cosφ*r, z=sinφ*r)のφをθぶん"減らす"操作に
-    //   相当する(符号が逆)。そのため剛体回転と見た目の回転方向を一致させるには、
-    //   ここでのφの増分にはROTATION_DIRECTIONの符号を反転させたものを使う必要がある
-    //   (このマイナスが無いと、俯瞰時(差動回転)だけ回転方向が逆になってしまう)。
-    angleOffset[i] += -ROTATION_DIRECTION * omega * deltaSeconds;
-    const angle = baseAngle[i] + angleOffset[i];
+    // (符号の理由はVERTEX_SHADER内のDIFF_ROTATION_SIGNと同じ。詳細は旧実装コメント参照)
+    const angle = baseAngle[i] + (-ROTATION_DIRECTION) * omega * elapsed;
     const i3 = i * 3;
     posArray[i3] = Math.cos(angle) * r + randomX[i];
     posArray[i3 + 2] = Math.sin(angle) * r + randomZ[i];
@@ -618,9 +799,20 @@ function updateGalaxyDifferentialRotation(galaxy, deltaSeconds) {
 // (=通常の剛体回転の「現状の仕様」へ復帰する)。
 export function setGalaxyDifferentialRotation(galaxy, active) {
   if (!galaxy) return;
+  const wasActive = galaxy.diffRotationActive;
   galaxy.diffRotationActive = !!active;
   if (galaxy.diffRotationActive) {
-    galaxy.diffAngleOffset.fill(0); // 有効化のたびリセット(累積のズレを防ぐ)
+    galaxy.diffElapsed = 0; // 有効化のたびリセット(累積のズレを防ぐ)
+    if (galaxy.material?.uniforms.uDiffActive) galaxy.material.uniforms.uDiffActive.value = 1;
+    if (galaxy.opaqueMaterial?.uniforms.uDiffActive) galaxy.opaqueMaterial.uniforms.uDiffActive.value = 1;
+    if (galaxy.material?.uniforms.uDiffElapsed) galaxy.material.uniforms.uDiffElapsed.value = 0;
+    if (galaxy.opaqueMaterial?.uniforms.uDiffElapsed) galaxy.opaqueMaterial.uniforms.uDiffElapsed.value = 0;
+  } else if (wasActive) {
+    // GPU側が見せていた「見かけの位置」を実際のposition属性へ焼き込んでから、
+    // シェーダー側の上書きを切る(=この一度だけはO(n)だが、無効化の瞬間だけなので軽い)。
+    bakeDiffRotationIntoPositions(galaxy);
+    if (galaxy.material?.uniforms.uDiffActive) galaxy.material.uniforms.uDiffActive.value = 0;
+    if (galaxy.opaqueMaterial?.uniforms.uDiffActive) galaxy.opaqueMaterial.uniforms.uDiffActive.value = 0;
   }
 }
 
