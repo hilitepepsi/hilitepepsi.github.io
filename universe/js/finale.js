@@ -37,6 +37,8 @@ const NORMALIZED_FINALE_QUOTES = normalizeFinaleQuotes(FINALE_QUOTES, QUOTE_INTE
  
 // ── 原点通過後に表示する公案 ──
 const KOAN_TEXT = 'We know the sound of two hands clapping.\nBut what is the sound of one hand clapping?';
+// 公案の出典: Nine Storiesのエピグラフ。引用の出典(FINALE_WORK)と同じ右下の共有出典ボックスに出す。
+const KOAN_WORK = 'Nine Stories (epigraph)';
  
 // ── 演出パラメータ(すべて仮値。実際に見ながら調整する前提) ──
 const WAIT_BEFORE_GROW = 3.0;       // クリック直後、最寄り点への合流アニメが終わってからの待機
@@ -372,7 +374,10 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
           quoteTimer = null;
         }
         finale.caption.hide(); // 右上の引用セリフはここまで表示を続け、最後の点到達で消す
-        sourceCaption.hide();  // 出典(右下)もセリフと同時に消す
+        // 右上の引用が消えるので、その出典(Catcher in the Rye)も外し、代わりに
+        // 残り続ける公案の出典(Nine Stories のエピグラフ)を右下に表示する。
+        // (公案はiクリック時のhandleIconClickで消えるので、出典もそこで一緒に消える)
+        sourceCaption.setText(KOAN_WORK);
         finale.lineA.visible = false; // Y軸側(FINALE_DEST)に到達したら緑の線Aを消す
         if (onDone) onDone();
       },
