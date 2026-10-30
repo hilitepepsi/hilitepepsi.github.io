@@ -31,6 +31,11 @@ import { SUN_ORBIT_PERIOD } from './solarSystem.js';
 //   - 銀河の中心には何も置かない(旧・銀河本体のバナナ/クリックでの収束演出は削除済み。
 //     現在の「バナナ」はrecord.js側にある、鏡三角錐の頂点に乗る別インスタンス)。
 //
+//   - ★ 2026-10-25 変更(ご指示反映): 銀河の「育ち」を「減り」に変更。最初は「一本の渦巻きの溝」が
+//     びっしり巻いたレコード盤の見た目で、訪問者のクリックで星が減るほど、溝がほどけて複数の腕を
+//     もつ銀河の形へ変わり、最後は星がすべてなくなってバルジだけが残る(詳細は下の
+//     GALAXY_RECORD_* / GALAXY_MORPH_* と、setGalaxyGrowthの注釈を参照)。
+//
 // main.js側の想定される呼び出し方:
 //   import { createGalaxy, revealGalaxy, updateGalaxy } from './galaxy.js';
 //   const galaxy = createGalaxy(scene, GALAXY_ANCHOR); // createSolarSystemの近くで1回
@@ -63,26 +68,57 @@ const GALAXY_PARTICLE_COUNT = 800000;
 const GALAXY_INNER_BOOST_COUNT = 120000; // GALAXY_PARTICLE_COUNTと同じ比率(10倍)で増やした
 const GALAXY_INNER_BOOST_RMIN_RATIO = 0.17; // GALAXY_RADIUSに対する比率(仮値)
 const GALAXY_INNER_BOOST_RMAX_RATIO = 0.45; // 同上(仮値)
-// 9本すべて揃ったときの合計粒子数(下のGALAXY_ARM_SETS参照。実際に描く数は育ち具合で変わる)。
+// 全粒子の合計(実際に描く数は、星がどれだけ減ったかで変わる)。
 const GALAXY_FULL_PARTICLE_COUNT = GALAXY_PARTICLE_COUNT + GALAXY_INNER_BOOST_COUNT;
 export const GALAXY_RADIUS = TRIPOD_RADIUS *80; // 「巨大」なので、tripod・太陽系をまるごと包む規模に(以前の2倍。仮値)
 // ↑ record.js側がNEEDLE_START_RADIUS(針先=太陽の出発点を「銀河の周縁側」に置く)の
 //   計算に参照するためexportした。
-const GALAXY_BRANCHES = 9;          // 渦の腕の本数(最終形。最初に出ているのは下のセット0の3本だけ)
-// ★ 2026-10-11 追加(ご指示反映): 「最初は腕3本・粒子数も1/3。残り6本は将来的に形成」への対応。
-//   腕を3本ずつの「セット」に分け、セット0(=GALAXY_ARM_EMPHASIS_BRANCHESと同じ0,3,6。120°間隔)
-//   だけを最初から描く。セット1・2は、starburstのクリック(record.js/galaxyGrowth.js)が進むたびに
-//   少しずつ粒子が増えて育つ(setGalaxyGrowth)。3本ずつなので、育っている途中でも常に
-//   120°対称の見た目になる。粒子は[セット0の全部][セット1の全部][セット2の全部]の順に
-//   並べてあり、描画範囲(drawRange)を伸ばすだけで増やせる(ジオメトリの作り直しは不要で、
-//   未解禁のセットはGPUの頂点処理自体も走らない)。
-//   セットの中は3本の腕に1粒ずつ順番に割り当てるので、途中まで描いても3本は常に均等。
-const GALAXY_ARM_SETS = [[0, 3, 6], [1, 4, 7], [2, 5, 8]];
-const GALAXY_PARTICLES_PER_SET = Math.round(GALAXY_FULL_PARTICLE_COUNT / GALAXY_ARM_SETS.length);
-const GALAXY_TOTAL_PARTICLE_COUNT = GALAXY_PARTICLES_PER_SET * GALAXY_ARM_SETS.length;
-// 内側ブースト粒(GALAXY_INNER_BOOST_COUNT/全体 = 3/23)を、各セットの中に均等に混ぜる比率。
+const GALAXY_BRANCHES = 9;          // 渦の腕の本数(銀河状態。レコード状態では全部が一本の溝に重なる)
+// ★ 2026-10-25 変更(ご指示反映): 「訪問者のクリックで星が減り、最後はバルジだけになる」への対応。
+//   以前の「腕3本から9本へ育つ」仕組み(GALAXY_ARM_SETS)は廃止し、最初から全粒子(下のTOTAL)を持つ。
+//   育ち具合(ステップ数)が進むと、描画する粒子数(drawRange)が1個ずつ減っていく。
+//   ・減る順番: 粒子はジオメトリ生成時に「腕の中心線からのブレ(GALAXY_RANDOMNESS)が小さい順」に
+//     (GALAXY_REMOVAL_ORDER_BIASぶんだけ緩めて)並べてあり、末尾(=腕から外れがちな粒)から先に消える。
+//     星が減るほど腕がくっきりして見える。
+//   ・見た目の変化(レコード→銀河): 全粒子が「レコード状態」と「銀河状態」の2つの位置を持ち、
+//     シェーダーが uMorph(0〜1)で混ぜる(VERTEX_SHADERのENABLE_DIFF_ROTATIONブロック)。
+//       レコード状態 … 一本のアルキメデス渦(等ピッチ)に、GALAXY_RECORD_TURNS回巻いた溝として並ぶ
+//       銀河状態     … 従来どおりの9本の腕(巻き量はGALAXY_SPIN)
+//     混ぜるのは極座標(半径と角度)。粒ごとに、溝の角度を「腕の角度にいちばん近い2πの整数倍の側」へ
+//     取り直してあるので(polyphony-space-10k.htmlのKKと同じ考え方)、粒の移動は最大でも半周で済み、
+//     溝の巻き数(GALAXY_RECORD_TURNS)を増やしても、変形中に粒が振り回されない。
+//     レコード状態の見た目(cos/sin)は、取り直しの前後で変わらない。
+//   粒子は全部で下のGALAXY_TOTAL_PARTICLE_COUNT個。1クリックで消える数は
+//   GALAXY_TOTAL_PARTICLE_COUNT ÷ CLICKS_TO_COMPLETE(galaxyGrowth.js)。
+export const GALAXY_TOTAL_PARTICLE_COUNT = GALAXY_FULL_PARTICLE_COUNT;
+// 内側ブースト粒(GALAXY_INNER_BOOST_COUNT/全体 = 3/23)を、全体に均等に混ぜる比率。
 const GALAXY_BOOST_CYCLE = 23;
 const GALAXY_BOOST_PER_CYCLE = 3;
+
+// ── レコード状態(初期の見た目)のパラメータ(仮値。見ながら調整してください) ──────────
+// 溝の巻き数。多いほど溝が細かく、レコードらしくなる(ただし画面上で溝の間隔が粒の大きさより
+// 細かくなると、溝が見分けられず均一な円盤に見える。その場合は減らすか、粒を小さくする)。
+const GALAXY_RECORD_TURNS = 96; // ★ 2026-10-25: 48→96(2倍)
+// 溝が始まる内側の半径(GALAXY_RADIUSに対する比率)。バルジ出現時の穴(record.jsのGALAXY_HOLE_RADIUS、
+// 約0.2倍)と合わせると、穴がそのままレコード中央のラベルの位置になる。
+const GALAXY_RECORD_INNER_RATIO = 0.17;
+const GALAXY_RECORD_GROOVE_WIDTH = 0.35; // 溝の太さ(溝の間隔=ピッチに対する比率。小さいほど細く鋭い)
+const GALAXY_RECORD_EDGE_FADE = 0.02;    // 外周のふち。GALAXY_RADIUSに対するこの幅で消える(レコードは縁がくっきり)
+// 曲と曲の間の「無音の帯」(半径の比率)。溝の粒がうすくなり、レコードの曲間に見える。[]で無効。
+const GALAXY_RECORD_TRACK_GAPS = [0.40, 0.56, 0.70, 0.84];
+const GALAXY_RECORD_TRACK_GAP_WIDTH = 0.012; // 無音の帯の半幅(GALAXY_RADIUSに対する比率)
+const GALAXY_RECORD_TRACK_GAP_DIM = 0.12;    // 無音の帯での粒の濃さ(0=完全に消える、1=変えない)
+// 星が減る割合(0〜1)に対する、レコード→銀河の変形の進み方。
+// START以前はずっとレコード、ENDで完全に銀河の形になる(間はなめらか)。ENDを1に近づけるほど、
+// 最後の最後まで変形が続く。
+const GALAXY_MORPH_START = 0.0;
+const GALAXY_MORPH_END = 0.97; // ★ 2026-10-28: 0.85→0.97。ここで変形は完了し、以降は「外周の星から」消える(下のGALAXY_PERIPHERY_FADE_RATIO・setGalaxyGrowth参照)
+// 変形が終わった(=星が97%減った)あと、残りの星を「外周から内側へ」消していくときの、消える縁のぼかし幅
+// (GALAXY_RADIUSに対する比率)。大きいほど縁がなだらかに薄れる。0に近いとくっきりした境目が走る。
+const GALAXY_PERIPHERY_FADE_RATIO = 0.06;
+// 星が消える順番の「腕からの遠さ」への偏り(0〜1)。1=腕から遠い粒から順に消える(最後は腕の芯だけが
+// 残り、細い線になる)、0=完全にランダムに消える(腕の太さは保たれるが、腕はくっきりしにくい)。
+const GALAXY_REMOVAL_ORDER_BIAS = 0.6;
 // ★ バグ修正(ご指摘反映): 「銀河を巨大化したら渦の溝構造が見えず均質な円盤になった」
 //   への対応。以前はspinAngle = radius(絶対座標) * GALAXY_SPIN * 0.02 という式で、
 //   半径の「絶対値」に巻き付きが比例していた。GALAXY_RADIUSを10倍にしたことで、
@@ -170,99 +206,97 @@ const VERTEX_SHADER = /* glsl */ `
   uniform float uNearFadeStart;
   uniform float uNearFadeRange;
   uniform float uMaxPixelSize;
+  uniform float uZoom;               // 2026-10-27: 俯瞰のズーム係数(=tan(基準fov/2)÷tan(現在fov/2))。1=等倍。fovを狭めたとき星も一緒に拡大されるようにする
   uniform float uArmEmphasis;         // 0=通常、1=強調full(setGalaxyArmEmphasisで外部からtween)
   uniform float uArmThickenStrength;  // 強調時の太さ倍率の強さ(bulge側は0=無効)
   uniform float uArmBrightenStrength; // 強調時の明るさ倍率の強さ(bulge側は0=無効)
   uniform float uHoleRadius;          // 中心の穴の半径(銀河ローカル)。0=穴なし(setGalaxyHoleでtween)
   uniform float uHoleFade;            // 穴のふちをぼかす幅
+  uniform float uCut;                 // 外周から消す境目の半径(銀河ローカル)。これより外側の星は消える。通常は1e6(=無効)。setGalaxyGrowthが設定
+  uniform float uCutW;                // 境目のぼかし幅
   uniform float uBoostAmount;         // 内側ブースト粒(aBoost=1)の表示度合い 0〜1
-  uniform float uSpinExtra;           // 腕の巻きの追加量(ラジアン。外周での追加分。setGalaxyGrowthが設定)
   attribute float aScale;
   attribute float aAlpha;
-  attribute float aBaseRadius; // 粒の(ブレを足した)中心からのXZ半径。穴の判定用(静的な値)
+  attribute float aBaseRadius; // 粒の中心からのXZ半径(bulge側用。銀河本体はシェーダー内で毎回求める)
   attribute float aBoost;      // 1=内側ブースト粒 / 0=通常の粒(この属性を持たないbulge側は0扱い)
   attribute float aArmWeight; // 0/1: 強調対象の腕(GALAXY_ARM_EMPHASIS_BRANCHES)に属するか
   attribute vec3 aColor;
   #ifdef ENABLE_DIFF_ROTATION
-    // ★ バグ修正(ご指摘反映): 「銀河俯瞰時の差動回転」は以前、毎フレームJS側でCPUループを
-    //   回してposition属性を書き換えていた(updateGalaxyDifferentialRotation)。粒子数を
-    //   増やすとこのCPUループが真っ先にボトルネックになるため、同じ計算をGPU(ここ)へ移した。
-    //   ジオメトリ生成時に一度だけ計算した「半径・基準角度・ランダムオフセット」を
-    //   attributeとして持たせ、経過時間(uDiffElapsed、CPU側はこの1個のfloatを
-    //   増やすだけ)から、ここで角度・位置を再計算する。bulge側のジオメトリは
-    //   これらのattributeを持たない(=定義しない)ため、ENABLE_DIFF_ROTATIONは
-    //   galaxy本体のマテリアルでだけtrueにする(createStarPointsMaterial参照)。
-    uniform float uDiffActive;  // 0=通常(position属性をそのまま使う) / 1=差動回転を適用
-    uniform float uDiffElapsed; // 差動回転が有効になってからの経過秒数
-    attribute float aDiffRadius;
-    attribute float aDiffBaseAngle;
-    attribute float aDiffRandomX;
+    // 銀河本体専用。粒子ごとに「銀河状態」と「レコード状態」の2つの位置(極座標)を持ち、
+    // uMorph(0=レコード、1=銀河。setGalaxyGrowthが設定)で混ぜる。差動回転(中心ほど速い)も
+    // ここで角度に足す。経過時間はuDiffElapsed(CPU側はこの1個のfloatを増やすだけ)。
+    // 差動回転を止めたあとも、uDiffElapsedはその時点の値のまま残る(=ねじれが保たれ、
+    // 以後は銀河全体の剛体回転が続く。以前の「位置の焼き込み」と同じ見え方)。
+    uniform float uDiffActive;
+    uniform float uDiffElapsed;
+    uniform float uMorph;
+    attribute float aDiffRadius;     // 銀河状態: 腕の中心線上の半径
+    attribute float aDiffBaseAngle;  // 銀河状態: branchAngle+spinAngle
+    attribute float aDiffRandomX;    // 銀河状態: 腕からのブレ
     attribute float aDiffRandomZ;
+    attribute float aRecRadius;      // レコード状態: 溝の半径(溝の幅ぶんのブレ込み)
+    attribute float aRecAngle;       // レコード状態: 溝の上の角度(何周も巻いた値)
+    attribute float aRecAlpha;       // レコード状態: 濃さ(縁・曲間の無音の帯・ブースト粒は0)
   #endif
   varying vec3 vColor;
   varying float vAlpha;
   varying float vColorBoost;
   void main() {
     vec3 pos = position;
+    float baseRadius = aBaseRadius;
+    float baseAlpha = aAlpha;
+    float edgeSize = 1.0;   // 縁で粒を細らせる倍率(銀河本体はここで求める。bulgeはaScaleに焼き込み済み)
+    float armMorph = 1.0;   // 腕の強調は銀河状態のときだけ効かせる
     #ifdef ENABLE_DIFF_ROTATION
-      if (uDiffActive > 0.5) {
-        // CPU版(旧updateGalaxyDifferentialRotation)と同じ式: ω(r) = ANGULAR_SPEED * GALAXY_RADIUS / max(r, minRadius)。
-        // ANGULAR_SPEED・GALAXY_RADIUS・GALAXY_DIFF_MIN_RADIUS_RATIO・回転方向の符号は
-        // 実行時に変化しない定数なので、JSの文字列テンプレートでリテラルとして埋め込んでいる
-        // (createStarPointsMaterial呼び出し側を参照)。
-        float minRadius = DIFF_GALAXY_RADIUS * DIFF_MIN_RADIUS_RATIO;
-        float omega = DIFF_ANGULAR_SPEED * (DIFF_GALAXY_RADIUS / max(aDiffRadius, minRadius));
-        float angle = aDiffBaseAngle + DIFF_ROTATION_SIGN * omega * uDiffElapsed;
-        pos.x = cos(angle) * aDiffRadius + aDiffRandomX;
-        pos.z = sin(angle) * aDiffRadius + aDiffRandomZ;
-      }
+      float r = mix(aRecRadius, aDiffRadius, uMorph);
+      // ω(r) = ANGULAR_SPEED * GALAXY_RADIUS / max(r, minRadius)(外周で通常の回転速度、中心ほど速い)
+      float minRadius = DIFF_GALAXY_RADIUS * DIFF_MIN_RADIUS_RATIO;
+      float omega = DIFF_ANGULAR_SPEED * (DIFF_GALAXY_RADIUS / max(r, minRadius));
+      float angle = mix(aRecAngle, aDiffBaseAngle, uMorph) + DIFF_ROTATION_SIGN * omega * uDiffElapsed;
+      pos.x = cos(angle) * r + aDiffRandomX * uMorph;
+      pos.z = sin(angle) * r + aDiffRandomZ * uMorph;
+      pos.y = position.y * uMorph;
+      baseRadius = length(pos.xz);
+      baseAlpha = mix(aRecAlpha, aAlpha, uMorph);
+      baseAlpha *= 1.0 - smoothstep(uCut - uCutW, uCut, r); // 変形完了後は外周の星から消える(uCut=1e6なら何も起きない)
+      edgeSize = 1.0 - DIFF_EDGE_SIZE_FALLOFF * (1.0 - baseAlpha);
+      armMorph = uMorph;
     #endif
-    // ★ 2026-10-11 追加: 腕の巻きを増やす(全9本が揃ったあとの育ち方)。半径に比例した角度だけ
-    //   XZ平面で回す(中心は動かず、外周ほど余計に巻く)。通常の位置・差動回転どちらの経路でも効く。
-    if (uSpinExtra != 0.0) {
-      float spinAngle = uSpinExtra * (aBaseRadius / ${GALAXY_RADIUS.toFixed(6)});
-      float spinCos = cos(spinAngle);
-      float spinSin = sin(spinAngle);
-      pos.xz = vec2(spinCos * pos.x - spinSin * pos.z, spinSin * pos.x + spinCos * pos.z);
-    }
     vec4 modelPosition = modelMatrix * vec4(pos, 1.0);
     vec4 viewPosition = viewMatrix * modelPosition;
     vec4 projectedPosition = projectionMatrix * viewPosition;
     gl_Position = projectedPosition;
 
-    gl_PointSize = uSize * aScale * uPixelRatio;
-    gl_PointSize *= (1.0 / -viewPosition.z);
+    gl_PointSize = uSize * aScale * edgeSize * uPixelRatio;
+    gl_PointSize *= (uZoom / -viewPosition.z); // uZoomは通常1。俯瞰のズーム時だけmain.jsが上げる(星が実寸のまま拡大される)
 
     // 中心の穴: 半径uHoleRadiusより内側の粒は消え、ふちはuHoleFadeの幅でなめらかに現れる。
     // 頂点属性ではなくuniformで判定するので、穴の広がりをtweenしてもジオメトリの
-    // 作り直し(=粒の再抽選・8万点の再生成)は不要。粒も穴に近いほど少し細らせる。
+    // 作り直しは不要。粒も穴に近いほど少し細らせる。
     float holeFade = 1.0;
     if (uHoleRadius > 0.0) {
-      holeFade = smoothstep(uHoleRadius, uHoleRadius + max(uHoleFade, 0.0001), aBaseRadius);
+      holeFade = smoothstep(uHoleRadius, uHoleRadius + max(uHoleFade, 0.0001), baseRadius);
     }
     gl_PointSize *= mix(0.45, 1.0, holeFade);
     float boostFade = mix(1.0, uBoostAmount, aBoost);
 
     // ★ 2026-09-17 追加: 強調対象の腕の粒だけ、uArmEmphasisに応じて太く・明るくする。
-    float armBoost = aArmWeight * uArmEmphasis;
+    float armBoost = aArmWeight * uArmEmphasis * armMorph;
     gl_PointSize *= 1.0 + armBoost * uArmThickenStrength;
 
-    // ★ 2026-09-17 追加: 画面上の見かけサイズに上限を設ける。カメラが極端に近づいても
-    //   「ベタ塗りの巨大な正方形」までは膨らまなくなる(=バルジ対策その2)。
-    //   uMaxPixelSize未指定(0)のときは無効(既定の1/-viewPosition.z減衰のみ)。
+    // ★ 2026-09-17 追加: 画面上の見かけサイズに上限を設ける(カメラが極端に近づいても
+    //   「ベタ塗りの巨大な正方形」までは膨らまなくなる)。uMaxPixelSize未指定(0)のときは無効。
     if (uMaxPixelSize > 0.0) {
       gl_PointSize = min(gl_PointSize, uMaxPixelSize);
     }
 
     vColor = aColor;
     vColorBoost = 1.0 + armBoost * uArmBrightenStrength;
-    // ★ 2026-09-17 追加: カメラが粒に近づきすぎたとき(=バルジのように大きいsizeを
-    //   持つ粒にカメラが接近して、テクスチャなしの円が画面いっぱいの「巨大なドット」に
-    //   見えてしまうケース)に、距離に応じてアルファを落として消す。銀河本体側は
-    //   常に十分遠いので、uNearFadeStart=0/uNearFadeRange=1(実質無効)で呼べばよい。
+    // カメラが粒に近づきすぎたとき、距離に応じてアルファを落として消す。
+    // 銀河本体側は常に十分遠いので、uNearFadeStart=0/uNearFadeRange=1(実質無効)で呼べばよい。
     float viewDist = -viewPosition.z;
     float nearFade = smoothstep(uNearFadeStart, uNearFadeStart + max(uNearFadeRange, 0.0001), viewDist);
-    vAlpha = aAlpha * nearFade * holeFade * boostFade;
+    vAlpha = baseAlpha * nearFade * holeFade * boostFade;
   }
 `;
 
@@ -330,27 +364,35 @@ const GALAXY_OPAQUE_POINT_SIZE = GALAXY_POINT_SIZE * 0.16; // 仮値。鏡での
 
 // ── ジオメトリ生成: 位置・色・サイズ属性をJS側で一度だけ計算する ─────────
 // 渦巻き円盤のみ(中心の棒状バルジは撤去済み。上部コメント参照)。
-// ★ 2026-09-16 追加(ご指示反映): 「バルジ出現の際に銀河に穴をあけて、バルジから
-//   腕が生えてるように見せたい」への対応。bar_bulge_preview.htmlのGALAXY_INNER_RADIUS
-//   と同じ考え方で、innerRadius(既定0=以前と同じ、中心まで詰まった円盤)を受け取り、
-//   半径を[innerRadius, GALAXY_RADIUS]の範囲にリマップして中心に穴を作れるようにした。
+// ★ 2026-09-16 追加: innerRadius(既定0)で、銀河状態の半径を[innerRadius, GALAXY_RADIUS]に
+//   リマップして中心に穴を作れる(setGalaxyInnerRadius)。
+// ★ 2026-10-25 変更(ご指示反映): 粒子ごとに「銀河状態」と「レコード状態」の2つの位置を持たせる。
+//   ・粒子は index が大きいほど「腕の中心線から外れがちな粒」になるよう並べてある
+//     (ブレの大きさの乱数を、GALAXY_REMOVAL_ORDER_BIASで偏らせた順に並べ替える)。描画数を減らすと
+//     末尾から消えるので、星が減るほど腕がくっきりする。ブレの分布そのものは従来と同じ。
+//     腕の割り当て(i % 9)・ブースト粒(3/23)は全体に均等に混ざる。
+//   ・レコード状態: 一本のアルキメデス渦(等ピッチ)。溝の上の位置は、面積が一様になるよう
+//     rc = sqrt(Rin² + u(R²-Rin²)) で決め、角度は rc に比例(GALAXY_RECORD_TURNS回巻き)。
+//     銀河状態の半径と同じ乱数 u から作るので、混ぜている途中も粒は渦に沿ったまま動く。
+//     ブースト粒はレコード状態では濃さ0(=見えない)で、変形が進むにつれて現れる。
 function buildGalaxyGeometry(innerRadius = 0) {
   const totalCount = GALAXY_TOTAL_PARTICLE_COUNT;
 
-  const positions = new Float32Array(totalCount * 3);
+  const positions = new Float32Array(totalCount * 3); // 銀河状態の位置(yは銀河状態の厚み。シェーダーが使う)
   const colors = new Float32Array(totalCount * 3);
   const scales = new Float32Array(totalCount);
   const alphas = new Float32Array(totalCount);
   const armWeights = new Float32Array(totalCount);
-  const baseRadii = new Float32Array(totalCount); // 穴の判定用(uHoleRadius)
   const boostFlags = new Float32Array(totalCount); // 内側ブースト粒なら1
-  // ★ 追加: 銀河俯瞰時の差動回転(setGalaxyDifferentialRotation。中心に近いほど
-  //   角速度を速くする)で、毎フレームpositionを再計算するために必要な、粒子ごとの
-  //   半径・基準角度(branchAngle+spinAngle)・(x,z)方向のランダムオフセットを保持する。
+  // 銀河状態(差動回転の基準も兼ねる)
   const diffRadius = new Float32Array(totalCount);
   const diffBaseAngle = new Float32Array(totalCount);
   const diffRandomX = new Float32Array(totalCount);
   const diffRandomZ = new Float32Array(totalCount);
+  // レコード状態
+  const recRadii = new Float32Array(totalCount);
+  const recAngles = new Float32Array(totalCount);
+  const recAlphas = new Float32Array(totalCount);
 
   // 外周/内周のフェード幅(ワールド単位)。0除算を避けるため下限を持たせる。
   const outerFadeWidth = Math.max(GALAXY_RADIUS * GALAXY_OUTER_FADE, 1e-6);
@@ -361,33 +403,67 @@ function buildGalaxyGeometry(innerRadius = 0) {
     return t * t * (3 - 2 * t);
   };
 
+  // レコード状態の幾何
+  const recInner = GALAXY_RADIUS * GALAXY_RECORD_INNER_RATIO;
+  const recSpan = GALAXY_RADIUS - recInner;
+  const recPitch = recSpan / GALAXY_RECORD_TURNS; // 溝の間隔(隣り合う巻きの半径の差)
+  const recAngleOf = (r) => Math.sign(GALAXY_SPIN) * Math.PI * 2 * GALAXY_RECORD_TURNS * (r - recInner) / recSpan; // 巻く向きはGALAXY_SPINと同じ(ほどけ方が連続する)
+  const recEdgeWidth = Math.max(GALAXY_RADIUS * GALAXY_RECORD_EDGE_FADE, 1e-6);
+  const gapHalf = Math.max(GALAXY_RADIUS * GALAXY_RECORD_TRACK_GAP_WIDTH, 1e-6);
+  const recAlphaOf = (r) => {
+    let a = 1 - smoothstep(GALAXY_RADIUS - recEdgeWidth, GALAXY_RADIUS, r);
+    for (const c of GALAXY_RECORD_TRACK_GAPS) {
+      const d = Math.abs(r - c * GALAXY_RADIUS);
+      a *= 1 - (1 - GALAXY_RECORD_TRACK_GAP_DIM) * (1 - smoothstep(gapHalf * 0.5, gapHalf, d));
+    }
+    return a;
+  };
+
+  // 消える順に並べたブレの乱数(0〜1)。バケットに分けて並べるだけのO(n)の並べ替え
+  // (92万個でも一瞬。バケット内の順は不問)。bias=1なら乱数の小さい順、0なら並べ替えなし。
+  const sortedKeys = new Float32Array(totalCount);
+  {
+    const BUCKETS = 4096;
+    const keys = new Float32Array(totalCount);
+    const bucketOf = new Uint16Array(totalCount);
+    const starts = new Uint32Array(BUCKETS + 1);
+    for (let j = 0; j < totalCount; j++) {
+      const k = Math.random();
+      keys[j] = k;
+      const order = GALAXY_REMOVAL_ORDER_BIAS * k + (1 - GALAXY_REMOVAL_ORDER_BIAS) * Math.random();
+      const b = Math.min(BUCKETS - 1, Math.floor(order * BUCKETS));
+      bucketOf[j] = b;
+      starts[b + 1]++;
+    }
+    for (let b = 0; b < BUCKETS; b++) starts[b + 1] += starts[b]; // starts[b]=バケットbの先頭の位置
+    for (let j = 0; j < totalCount; j++) sortedKeys[starts[bucketOf[j]]++] = keys[j];
+  }
+
   for (let i = 0; i < totalCount; i++) {
     const i3 = i * 3;
 
-    // 並び順: [セット0][セット1][セット2]。セット内はk番目の粒子を3本の腕に順番に割り当てる。
-    const setIndex = Math.floor(i / GALAXY_PARTICLES_PER_SET);
-    const k = i - setIndex * GALAXY_PARTICLES_PER_SET;
-    const isBoost = Math.floor(k / 3) % GALAXY_BOOST_CYCLE < GALAXY_BOOST_PER_CYCLE;
-    let radius;
+    const isBoost = Math.floor(i / 3) % GALAXY_BOOST_CYCLE < GALAXY_BOOST_PER_CYCLE;
+    let radius;     // 銀河状態の半径(腕の中心線上)
+    let recCenter;  // レコード状態の、溝の中心線上の半径
     if (isBoost) {
       // 内側ブースト粒: [RMIN, RMAX]で「RMINが最も濃く、RMAXで0へ直線的に減る」分布。
       // (三角形分布の逆関数: r = RMAX - (RMAX-RMIN)*sqrt(v))
       const rMin = GALAXY_RADIUS * GALAXY_INNER_BOOST_RMIN_RATIO;
       const rMax = GALAXY_RADIUS * GALAXY_INNER_BOOST_RMAX_RATIO;
       radius = rMax - (rMax - rMin) * Math.sqrt(Math.random());
+      recCenter = Math.max(radius, recInner); // レコード状態では見えない(濃さ0)ので、位置は何でもよい
     } else {
-      radius = innerRadius + Math.pow(Math.random(), 0.7) * (GALAXY_RADIUS - innerRadius);
+      const u = Math.random();
+      radius = innerRadius + Math.pow(u, 0.7) * (GALAXY_RADIUS - innerRadius);
+      recCenter = Math.sqrt(recInner * recInner + u * (GALAXY_RADIUS * GALAXY_RADIUS - recInner * recInner));
     }
-    const armIndex = GALAXY_ARM_SETS[setIndex][k % 3];
+    const armIndex = i % GALAXY_BRANCHES;
     const branchAngle = (armIndex / GALAXY_BRANCHES) * Math.PI * 2;
-    const spinAngle = (radius / GALAXY_RADIUS) * GALAXY_SPIN; // ★ 修正: 絶対半径ではなく正規化半径(0〜1)を使う(銀河のサイズに依存しないように)
+    const spinAngle = (radius / GALAXY_RADIUS) * GALAXY_SPIN; // 正規化半径(0〜1)を使う(銀河のサイズに依存しない)
 
-    // ★ 2026-09-17 修正: 腕からのブレを等方(球面上で一様な向き)にする。
-    //   以前はX/Zに「同じ大きさ・符号だけランダム」な値を足していたため、ブレの向きが
-    //   常に対角4方向(±s, ±s)に限られ、稀に大きく外れる粒子が四隅に集中して、
-    //   銀河の周縁が四角いシルエットに見えていた。向きを球面上で一様にサンプリングし、
-    //   大きさだけをrandomStrengthで決めることで、どの方位にも等確率で散る=円状になる。
-    const randomStrength = Math.pow(Math.random(), GALAXY_RANDOMNESS_POWER) * GALAXY_RANDOMNESS * radius;
+    // 腕からのブレ。向きは球面上で一様(★2026-09-17: 四角いシルエット対策)、大きさは
+    // 並べ替え済みの乱数の累乗(iが大きいほど大きくなりがち=末尾ほど腕から外れた粒)。
+    const randomStrength = Math.pow(sortedKeys[i], GALAXY_RANDOMNESS_POWER) * GALAXY_RANDOMNESS * radius;
     const dirTheta = Math.random() * Math.PI * 2;
     const dirY = Math.random() * 2 - 1;          // cos(φ)を一様に取ると球面上で一様になる
     const dirXZ = Math.sqrt(1 - dirY * dirY);
@@ -407,26 +483,30 @@ function buildGalaxyGeometry(innerRadius = 0) {
     diffRandomX[i] = randomX;
     diffRandomZ[i] = randomZ;
 
+    // レコード状態: 溝の中心線からの半径方向のブレ(三角分布。溝の太さ=ピッチ×GALAXY_RECORD_GROOVE_WIDTH)。
+    const recRadius = recCenter + (Math.random() + Math.random() - 1) * 0.5 * GALAXY_RECORD_GROOVE_WIDTH * recPitch;
+    recRadii[i] = recRadius;
+    // 溝の角度は2πの整数倍ぶん取り直しても、レコード状態の位置は変わらない。腕の角度に最も近い側を選ぶ。
+    const recAngleRaw = recAngleOf(recCenter);
+    recAngles[i] = recAngleRaw - Math.PI * 2 * Math.round((recAngleRaw - (branchAngle + spinAngle)) / (Math.PI * 2));
+    recAlphas[i] = isBoost ? 0 : recAlphaOf(recRadius);
+
     const mixedColor = GALAXY_INSIDE_COLOR.clone().lerp(GALAXY_OUTSIDE_COLOR, radius / GALAXY_RADIUS);
     colors[i3] = mixedColor.r;
     colors[i3 + 1] = mixedColor.g;
     colors[i3 + 2] = mixedColor.b;
 
-    // ★ 2026-09-17 追加: 境界フェード。ブレを足した「実際の」XZ半径で判定するので、
-    //   腕から外へ飛び出した粒子も含めて縁が滑らかに消える。
+    // 境界フェード(銀河状態)。ブレを足した「実際の」XZ半径で判定する。
     const finalRadius = Math.hypot(x, z);
     let edge = 1 - smoothstep(GALAXY_RADIUS - outerFadeWidth, GALAXY_RADIUS, finalRadius);
     if (innerFadeWidth > 0) {
-      // 中心に穴があるとき(バルジ出現時)は、穴のふちも同様にぼかす。
       edge *= smoothstep(innerRadius, innerRadius + innerFadeWidth, finalRadius);
     }
 
     alphas[i] = edge;
-    baseRadii[i] = finalRadius;
     boostFlags[i] = isBoost ? 1 : 0;
-    // 縁では粒そのものも細らせると、フェードがより自然に見える。
-    const sizeJitter = Math.random() * 0.7 + 0.3; // 大きさに個体差をつける(0.3〜1.0)
-    scales[i] = sizeJitter * (1 - GALAXY_EDGE_SIZE_FALLOFF * (1 - edge));
+    // 大きさの個体差(0.3〜1.0)。縁で粒を細らせる処理は、状態ごとに変わるのでシェーダー側で行う。
+    scales[i] = Math.random() * 0.7 + 0.3;
 
     // 強調対象の3本の腕(GALAXY_ARM_EMPHASIS_BRANCHES)に属する粒だけ1、それ以外は0。
     armWeights[i] = GALAXY_ARM_EMPHASIS_BRANCHES.includes(armIndex) ? 1 : 0;
@@ -438,20 +518,20 @@ function buildGalaxyGeometry(innerRadius = 0) {
   geometry.setAttribute('aScale', new THREE.BufferAttribute(scales, 1));
   geometry.setAttribute('aAlpha', new THREE.BufferAttribute(alphas, 1));
   geometry.setAttribute('aArmWeight', new THREE.BufferAttribute(armWeights, 1));
-  geometry.setAttribute('aBaseRadius', new THREE.BufferAttribute(baseRadii, 1));
   geometry.setAttribute('aBoost', new THREE.BufferAttribute(boostFlags, 1));
-  // ★ 追加: GPU側差動回転用(VERTEX_SHADER内のENABLE_DIFF_ROTATIONブロック参照)。
   geometry.setAttribute('aDiffRadius', new THREE.BufferAttribute(diffRadius, 1));
   geometry.setAttribute('aDiffBaseAngle', new THREE.BufferAttribute(diffBaseAngle, 1));
   geometry.setAttribute('aDiffRandomX', new THREE.BufferAttribute(diffRandomX, 1));
   geometry.setAttribute('aDiffRandomZ', new THREE.BufferAttribute(diffRandomZ, 1));
-  geometry.userData.diffRotationData = {
-    radius: diffRadius,
-    baseAngle: diffBaseAngle,
-    randomX: diffRandomX,
-    randomZ: diffRandomZ,
+  geometry.setAttribute('aRecRadius', new THREE.BufferAttribute(recRadii, 1));
+  geometry.setAttribute('aRecAngle', new THREE.BufferAttribute(recAngles, 1));
+  geometry.setAttribute('aRecAlpha', new THREE.BufferAttribute(recAlphas, 1));
+  // CPU側で「いまの粒の位置」を求める(getGalaxyStarPoint。音符の着地点用)ための控え。
+  geometry.userData.morphData = {
+    radius: diffRadius, baseAngle: diffBaseAngle, randomX: diffRandomX, randomZ: diffRandomZ,
+    recRadius: recRadii, recAngle: recAngles, positions,
   };
-  geometry.setDrawRange(0, GALAXY_PARTICLES_PER_SET); // 最初は腕3本ぶん(=粒子数1/3)だけ描く
+  geometry.setDrawRange(0, totalCount); // 最初は全部描く(育ち具合はsetGalaxyGrowthが反映する)
   return geometry;
 }
 
@@ -474,25 +554,33 @@ export function setGalaxyHole(galaxy, radius, boostAmount = 1) {
   });
 }
 
-// ══ 2026-10-11 追加(ご指示反映): 銀河の「育ち」 ══════════════════════════════
-// 育ち具合は「ステップ数」1つで表す(0=腕3本・粒子1/3。小数でよく、tweenから連続で渡せる)。
-//   0 → FORMATION_STEPS : 残りの6本が、3本ずつ順番に(セット1→セット2)粒子が増えて形成される
-//   FORMATION_STEPS 以降: 9本揃ったあと。1ステップごとに腕の巻きが増えていく(上限あり)
-// starburstをクリックするたび(record.js/galaxyGrowth.js)に1ステップ進める想定。
-const GALAXY_GROWTH_STEPS_PER_SET = 10;   // 腕3本(1セット)を形成し切るのに必要なステップ数(仮値)
-export const GALAXY_GROWTH_FORMATION_STEPS = GALAXY_GROWTH_STEPS_PER_SET * (GALAXY_ARM_SETS.length - 1);
-const GALAXY_EXTRA_SPIN_PER_STEP = Math.abs(GALAXY_SPIN) * 0.05; // 1ステップで基本の巻き量の5%ぶん巻く(仮値)
-const GALAXY_EXTRA_SPIN_MAX_STEPS = 20;   // 巻きを増やすステップの上限(20×5%=基本の2倍まで。仮値)
-export const GALAXY_GROWTH_MAX_STEPS = GALAXY_GROWTH_FORMATION_STEPS + GALAXY_EXTRA_SPIN_MAX_STEPS;
+// ══ 2026-10-25 変更(ご指示反映): 銀河の「育ち」→「星が減る」 ══════════════════════
+// 育ち具合は「ステップ数」1つで表す(0=星が全部ある・レコードの見た目 〜 MAX=星が全部なくなる)。
+// 小数でよく、tweenから連続で渡せる。starburstのクリック(record.js/galaxyGrowth.js)で進む。
+//   progress = steps / GALAXY_GROWTH_MAX_STEPS         … 星が減った割合(0〜1)
+//   描く粒子数 = 全粒子 × (1 - progress)                 … 末尾(腕から外れた粒)から消える
+//   morph     = smoothstep(START, END, progress)        … 0=レコード、1=銀河の腕
+// progress=1では粒子が0個になり、中心のバルジ(record.js)だけが残る。
+export const GALAXY_GROWTH_MAX_STEPS = 100;
 
-// ステップ数から、描画する粒子数と追加の巻き量(ラジアン)を求める(純粋な計算)。
+// ステップ数から、描画する粒子数と変形の度合いを求める(純粋な計算)。
 export function getGalaxyGrowthLayout(steps) {
-  const s = Math.max(steps, 0);
-  const formation = Math.min(s, GALAXY_GROWTH_FORMATION_STEPS);
-  const extraSteps = Math.min(Math.max(s - GALAXY_GROWTH_FORMATION_STEPS, 0), GALAXY_EXTRA_SPIN_MAX_STEPS);
+  const progress = THREE.MathUtils.clamp(steps / GALAXY_GROWTH_MAX_STEPS, 0, 1);
+  const t = THREE.MathUtils.clamp((progress - GALAXY_MORPH_START) / Math.max(GALAXY_MORPH_END - GALAXY_MORPH_START, 1e-6), 0, 1);
+  // ★ 2026-10-28: 変形はMORPH_ENDで完了する。そこまでは従来どおり「末尾(腕から外れた粒)から」消え、
+  //   MORPH_END以降は残った粒(腕の芯)を「外周から内側へ」消す(peripheryQ: 0→1)。
+  //   後半は粒子数ではなく半径のしきい値(cut)で消すので、drawCountはMORPH_ENDの時点の数のまま
+  //   据え置き、peripheryQ=1(=progress 1)で0にする。
+  const peripheryQ = THREE.MathUtils.clamp((progress - GALAXY_MORPH_END) / Math.max(1 - GALAXY_MORPH_END, 1e-6), 0, 1);
+  const cutWidth = GALAXY_RADIUS * GALAXY_PERIPHERY_FADE_RATIO;
   return {
-    drawCount: Math.round(GALAXY_PARTICLES_PER_SET * (1 + formation / GALAXY_GROWTH_STEPS_PER_SET)),
-    extraSpin: Math.sign(GALAXY_SPIN) * extraSteps * GALAXY_EXTRA_SPIN_PER_STEP,
+    progress,
+    morph: t * t * (3 - 2 * t),
+    peripheryQ,
+    // しきい値: peripheryQ=0で外周の外(=何も消えない)、1で中心(=全部消える)。0のときは無効値(1e6)。
+    cut: peripheryQ > 0 ? (1 - peripheryQ) * (GALAXY_RADIUS + cutWidth) : 1e6,
+    cutWidth,
+    drawCount: peripheryQ >= 1 ? 0 : Math.round(GALAXY_TOTAL_PARTICLE_COUNT * (1 - Math.min(progress, GALAXY_MORPH_END))),
   };
 }
 
@@ -500,26 +588,53 @@ export function getGalaxyGrowthLayout(steps) {
 // 毎フレーム(tweenのonUpdate)から呼んでよい。核レイヤーは同じジオメトリを共有しているので一緒に変わる。
 export function setGalaxyGrowth(galaxy, steps) {
   if (!galaxy || !galaxy.points) return;
-  const { drawCount, extraSpin } = getGalaxyGrowthLayout(steps);
+  const { morph, drawCount, cut, cutWidth } = getGalaxyGrowthLayout(steps);
   galaxy.points.geometry.setDrawRange(0, drawCount);
+  const hasStars = drawCount > 0; // 0個のときは描画自体をやめる(バルジだけが残る)
+  galaxy.points.visible = hasStars;
+  if (galaxy.opaquePoints) galaxy.opaquePoints.visible = hasStars;
   [galaxy.material, galaxy.opaqueMaterial].forEach((m) => {
-    if (m) m.uniforms.uSpinExtra.value = extraSpin;
+    if (!m) return;
+    if (m.uniforms.uMorph) m.uniforms.uMorph.value = morph;
+    m.uniforms.uCut.value = cut;
+    m.uniforms.uCutW.value = cutWidth;
   });
+  galaxy.growthCut = cut; // 外周から消えている最中の境目(getGalaxyRandomStarPointが消えた星を避けるのに使う)
   galaxy.growthSteps = Math.max(steps, 0);
+  galaxy.growthMorph = morph;
 }
 
-// 今「形成中」の腕(3本)の番号。形成が終わったあとは全9本。演出で「どの腕へ向かうか」に使う。
-export function getGalaxyGrowingArms(steps) {
-  if (steps >= GALAXY_GROWTH_FORMATION_STEPS) return GALAXY_ARM_SETS.flat();
-  return GALAXY_ARM_SETS[1 + Math.floor(Math.max(steps, 0) / GALAXY_GROWTH_STEPS_PER_SET)];
+// index番目の粒の「いまの」位置を、銀河ローカル座標でoutに返す(VERTEX_SHADERと同じ式。
+// 差動回転のねじれも含む)。音符の着地点などCPU側で星の位置が欲しいときに使う。
+export function getGalaxyStarPoint(galaxy, index, out = new THREE.Vector3()) {
+  const data = galaxy.points.geometry.userData.morphData;
+  const m = galaxy.growthMorph || 0;
+  const r = THREE.MathUtils.lerp(data.recRadius[index], data.radius[index], m);
+  const minRadius = GALAXY_RADIUS * GALAXY_DIFF_MIN_RADIUS_RATIO;
+  const omega = ANGULAR_SPEED * (GALAXY_RADIUS / Math.max(r, minRadius));
+  const angle = THREE.MathUtils.lerp(data.recAngle[index], data.baseAngle[index], m)
+    + (-ROTATION_DIRECTION) * omega * (galaxy.diffElapsed || 0);
+  return out.set(
+    Math.cos(angle) * r + data.randomX[index] * m,
+    data.positions[index * 3 + 1] * m,
+    Math.sin(angle) * r + data.randomZ[index] * m,
+  );
 }
 
-// 腕armIndex上の、中心からの距離の比率(0〜1)の点を、銀河ローカル座標でoutに返す
-// (粒子の生成式と同じ。現在の巻きの追加量も含む)。ブレは含まない「腕の中心線」上の点。
-export function getGalaxyArmPoint(galaxy, armIndex, radiusRatio, out = new THREE.Vector3()) {
-  const { extraSpin } = getGalaxyGrowthLayout(galaxy ? galaxy.growthSteps : 0);
-  const angle = (armIndex / GALAXY_BRANCHES) * Math.PI * 2 + radiusRatio * (GALAXY_SPIN + extraSpin);
-  return out.set(Math.cos(angle) * radiusRatio * GALAXY_RADIUS, 0, Math.sin(angle) * radiusRatio * GALAXY_RADIUS);
+// いま残っている星(描画中の粒)からランダムに1つ選び、その位置を返す。星が1つも残っていなければ
+// 銀河の中心(=バルジ)を返す。
+export function getGalaxyRandomStarPoint(galaxy, out = new THREE.Vector3()) {
+  const count = galaxy && galaxy.points ? galaxy.points.geometry.drawRange.count : 0;
+  if (!(count > 0)) return out.set(0, 0, 0);
+  // ★ 2026-10-28: 外周から消えている最中(growthCut有効)は、消えた星(境目より外側)を避けて選ぶ。
+  //   描画数(drawRange)だけでは外周の消失が分からないので、半径で判定して引き直す。
+  const cut = galaxy.growthCut || 1e6;
+  const radii = galaxy.points.geometry.userData.morphData.radius;
+  let index = Math.floor(Math.random() * count);
+  for (let tries = 0; tries < 30 && radii[index] > cut; tries++) {
+    index = Math.floor(Math.random() * count);
+  }
+  return getGalaxyStarPoint(galaxy, index, out);
 }
 
 // ── 2026-09-16 追加: バルジ出現のタイミングでrecord.js側から呼んでもらい、円盤の
@@ -583,10 +698,12 @@ export function createStarPointsMaterial({
       DIFF_ANGULAR_SPEED: ANGULAR_SPEED.toFixed(8),
       DIFF_MIN_RADIUS_RATIO: GALAXY_DIFF_MIN_RADIUS_RATIO.toFixed(6),
       DIFF_ROTATION_SIGN: (-ROTATION_DIRECTION).toFixed(1),
+      DIFF_EDGE_SIZE_FALLOFF: GALAXY_EDGE_SIZE_FALLOFF.toFixed(6),
     } : {},
     uniforms: {
       uSize: { value: size },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uZoom: { value: 1 },
       uAlpha: { value: 1 },
       uBrightness: { value: brightness },
       uNearFadeStart: { value: nearFadeStart },
@@ -597,11 +714,13 @@ export function createStarPointsMaterial({
       uArmBrightenStrength: { value: armBrightenStrength },
       uHoleRadius: { value: 0 },
       uHoleFade: { value: 1 },
+      uCut: { value: 1e6 },
+      uCutW: { value: 1 },
       uBoostAmount: { value: 0 },
-      uSpinExtra: { value: 0 },
       ...(enableDiffRotation ? {
         uDiffActive: { value: 0 },
         uDiffElapsed: { value: 0 },
+        uMorph: { value: 0 }, // 0=レコード、1=銀河(setGalaxyGrowthが設定)
       } : {}),
     },
     transparent: true,
@@ -637,10 +756,12 @@ export function createGalaxyOpaqueMaterial({
       DIFF_ANGULAR_SPEED: ANGULAR_SPEED.toFixed(8),
       DIFF_MIN_RADIUS_RATIO: GALAXY_DIFF_MIN_RADIUS_RATIO.toFixed(6),
       DIFF_ROTATION_SIGN: (-ROTATION_DIRECTION).toFixed(1),
+      DIFF_EDGE_SIZE_FALLOFF: GALAXY_EDGE_SIZE_FALLOFF.toFixed(6),
     } : {},
     uniforms: {
       uSize: { value: size },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uZoom: { value: 1 },
       uAlpha: { value: 1 },
       uNearFadeStart: { value: nearFadeStart },
       uNearFadeRange: { value: nearFadeRange },
@@ -650,11 +771,13 @@ export function createGalaxyOpaqueMaterial({
       uArmBrightenStrength: { value: armBrightenStrength },
       uHoleRadius: { value: 0 },
       uHoleFade: { value: 1 },
+      uCut: { value: 1e6 },
+      uCutW: { value: 1 },
       uBoostAmount: { value: 0 },
-      uSpinExtra: { value: 0 },
       ...(enableDiffRotation ? {
         uDiffActive: { value: 0 },
         uDiffElapsed: { value: 0 },
+        uMorph: { value: 0 }, // 0=レコード、1=銀河(setGalaxyGrowthが設定)
       } : {}),
     },
     transparent: false,
@@ -692,6 +815,8 @@ export function createGalaxy(scene, anchor) {
   // 8万パーティクルへの標準のPoints raycastは重く、かつこの銀河自体はもうクリック対象では
   // ないので無効化しておく(no-op化)。
   points.raycast = () => {};
+  // 粒の位置はシェーダーが毎回求める(position属性は銀河状態の値のまま)ので、境界球での判定はさせない。
+  points.frustumCulled = false;
 
   // ★ 2026-09-19 追加: 不透明な「核」レイヤー(ガラス越しの透過用。上記コメント参照)。
   //   輝きレイヤー(points)とまったく同じジオメトリ(=同じBufferGeometryインスタンス)を
@@ -699,6 +824,7 @@ export function createGalaxy(scene, anchor) {
   const opaqueMaterial = buildGalaxyOpaqueMaterial();
   const opaquePoints = new THREE.Points(geometry, opaqueMaterial);
   opaquePoints.raycast = () => {};
+  opaquePoints.frustumCulled = false;
 
   // starsGroup: 銀河のパーティクルだけを持つグループ。ここをrotateすることで自転を表現する。
   const starsGroup = new THREE.Group();
@@ -715,7 +841,8 @@ export function createGalaxy(scene, anchor) {
     opaquePoints,   // ← ガラス透過用の不透明レイヤー(setGalaxyInnerRadiusが一緒に張り替える)
     opaqueMaterial,
     state: 'hidden', // 'hidden' → 'idle'
-    growthSteps: 0, // 育ち具合(setGalaxyGrowthが更新)。0=腕3本のみ
+    growthSteps: 0, // 育ち具合(setGalaxyGrowthが更新)。0=星が全部ある(レコードの見た目)
+    growthMorph: 0, // 変形の度合い(setGalaxyGrowthが更新)。0=レコード、1=銀河の腕
     needleSpinActive: false, // ← 旧・針実装が使っていたフラグ(現在は呼び出し元なし。将来の再利用のため残す)
     // ★ 2026-09-18 追加(ご指示反映): 「トーンアームを円盤の外周に置いたら、銀河の
     //   回転を少し上げる」への対応。needleSpinActive(固定でπ rad/秒という大きな
@@ -768,31 +895,9 @@ export function updateGalaxy(galaxy, deltaSeconds) {
 // ことの簡易的な近似)。中心付近で角速度が発散しないよう下限半径を設けている。
 const GALAXY_DIFF_MIN_RADIUS_RATIO = 0.06; // GALAXY_RADIUSに対する比率(仮値)
 
-// 無効化する瞬間に一度だけ呼ぶ: その時点の(GPU側で計算されていた)見かけの位置を
-// position属性へ実際に書き込み、以後の剛体回転(starsGroup.rotateOnWorldAxis)が
-// 違和感なくそこから続けられるようにする(=CPU版が毎フレームやっていたことの
-// 「最後の1回だけ」を行う。count倍ではなく1回だけなので、粒子数が多くても軽い)。
-function bakeDiffRotationIntoPositions(galaxy) {
-  const geometry = galaxy.points.geometry;
-  const data = geometry.userData.diffRotationData;
-  if (!data) return;
-  const { radius, baseAngle, randomX, randomZ } = data;
-  const positionAttr = geometry.attributes.position;
-  const posArray = positionAttr.array;
-  const minRadius = GALAXY_RADIUS * GALAXY_DIFF_MIN_RADIUS_RATIO;
-  const elapsed = galaxy.diffElapsed || 0;
-  const count = radius.length;
-  for (let i = 0; i < count; i++) {
-    const r = radius[i];
-    const omega = ANGULAR_SPEED * (GALAXY_RADIUS / Math.max(r, minRadius));
-    // (符号の理由はVERTEX_SHADER内のDIFF_ROTATION_SIGNと同じ。詳細は旧実装コメント参照)
-    const angle = baseAngle[i] + (-ROTATION_DIRECTION) * omega * elapsed;
-    const i3 = i * 3;
-    posArray[i3] = Math.cos(angle) * r + randomX[i];
-    posArray[i3 + 2] = Math.sin(angle) * r + randomZ[i];
-  }
-  positionAttr.needsUpdate = true;
-}
+// ★ 2026-10-25 変更: 以前は、差動回転を止める瞬間に「見かけの位置」をposition属性へ焼き込んでいたが、
+//   粒の位置は(レコード⇔銀河の変形のために)常にシェーダーが求める方式になったので、焼き込みは不要。
+//   止めたあとはuDiffElapsedがその時点の値のまま残り、ねじれが保たれる。
 
 // main.js側: 最後の銀河俯瞰(enterGalaxyOverview)に到達したタイミングでtrueにし、
 // record.js側: トーンアームを置いた(placeTonearmOnRecord)タイミングでfalseに戻す
@@ -808,9 +913,7 @@ export function setGalaxyDifferentialRotation(galaxy, active) {
     if (galaxy.material?.uniforms.uDiffElapsed) galaxy.material.uniforms.uDiffElapsed.value = 0;
     if (galaxy.opaqueMaterial?.uniforms.uDiffElapsed) galaxy.opaqueMaterial.uniforms.uDiffElapsed.value = 0;
   } else if (wasActive) {
-    // GPU側が見せていた「見かけの位置」を実際のposition属性へ焼き込んでから、
-    // シェーダー側の上書きを切る(=この一度だけはO(n)だが、無効化の瞬間だけなので軽い)。
-    bakeDiffRotationIntoPositions(galaxy);
+    // 止めるだけ。uDiffElapsed(ねじれ)はそのまま残し、以後は銀河全体の剛体回転が続く。
     if (galaxy.material?.uniforms.uDiffActive) galaxy.material.uniforms.uDiffActive.value = 0;
     if (galaxy.opaqueMaterial?.uniforms.uDiffActive) galaxy.opaqueMaterial.uniforms.uDiffActive.value = 0;
   }
