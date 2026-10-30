@@ -1,23 +1,30 @@
 import * as THREE from 'three';
 import {
-  GALAXY_RADIUS, GALAXY_GROWTH_MAX_STEPS,
-  setGalaxyGrowth, getGalaxyGrowingArms, getGalaxyArmPoint,
+  GALAXY_GROWTH_MAX_STEPS,
+  setGalaxyGrowth, getGalaxyRandomStarPoint,
 } from './galaxy.js';
 import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
 
 // ══════════════════════════════════════════════════════════════
-// ── 銀河の「育ち」演出: starburstをクリック → 音符がカメラ側から飛んできて、
-//    銀河に着くと粒子に変わり、銀河の一部になる ──
+// ── 銀河の「星が減る」演出: starburstをクリック → 音符がカメラ側から飛んできて、
+//    銀河の星に着くと粒子に変わり、その分だけ銀河の星が減る(救われる) ──
 // ══════════════════════════════════════════════════════════════
 //
+// ★ 2026-10-25 変更(ご指示反映): 「訪問者のクリックで星が減り、最後はバルジだけになる」。
+//   銀河は最初、一本の渦巻きの溝でできたレコード盤の見た目で、星が減るほど溝がほどけて
+//   腕をもつ銀河の形へ変わる(形の変化はgalaxy.jsのsetGalaxyGrowth)。完成(=星が全部なくなる)と
+//   中心のバルジ(record.js)だけが残る。以前の「腕が3本から9本へ育つ」仕組みは廃止。
+//
+// ★ 2026-10-25 変更(ご指示反映): 「消える星が、こちらへ向かってやってきて、近づくと音符だった」。
+//   音符がカメラ側から銀河へ飛び込む演出を、向きを逆にした。
 // 流れ(playGalaxyContribution):
 //   1. 「I'm saving them.」を画面に出す(以後ずっと表示したまま)
-//   2. 音符(♪♫♩♬)が、カメラのすぐ手前(視野の中のランダムな位置)から現れ、
-//      今まさに育っている腕(galaxy.jsのgetGalaxyGrowingArms)の上の点へ飛んでいく
-//   3. 銀河に着いた音符は、小さな粒子の群れに変わって散り(銀河と一緒に回る)、
-//      同時に、その1個ぶんだけ銀河の粒子が増える(setGalaxyGrowth)
-//   4. 全部の音符が着き終わると、育ち具合が1ステップ進んだ状態になる
-// ★ 2026-10-11 変更(ご指示反映): 育ち具合(ステップ数)は「サイト全体の累計」。
+//   2. いま銀河に残っている星のどれか(galaxy.jsのgetGalaxyRandomStarPoint)が、その場でひと粒の
+//      光になって銀河を離れ、カメラのほうへ向かって飛んでくる(この瞬間に、銀河の星が1個ぶん減る)
+//   3. 近づくにつれて、光の点はだんだん音符(♪♫♩♬)の形になり、カメラのすぐ手前(視野の中の
+//      ランダムな位置)まで来て、ふわりと消える
+//   4. 全部の音符が飛び立つと、星の減り具合が1ステップ進んだ状態になる
+// ★ 2026-10-11 変更(ご指示反映): 減り具合(ステップ数)は「サイト全体の累計」。
 //   訪問者の誰かがstarburstをクリックするたびに、サーバー(galaxy-counter-worker.js)の合計が
 //   1増え、全員の銀河が同じ育ち具合になる。クリックの流れは:
 //     クリック → サーバーへ「+1」を送って最新の合計を受け取る(最大API_TIMEOUT_MS待つ)
@@ -30,7 +37,7 @@ import { createCaptionBox, makeCaptionController, getSourceCaption } from './cap
 //   無料枠で収めるため、サーバーへの問い合わせは必要最小限にしてある:
 //     ・最新の合計の取得は、宇宙ページに入ったとき(refreshGalaxyGrowth)に1回だけ。さらに10分間はキャッシュ。
 //     ・同じ端末は、同じ日(UTC)に2回目以降はサーバーへ送らない(演出だけ流れる)。
-// ステップと腕・巻きの対応はgalaxy.jsの冒頭(GALAXY_GROWTH_*)を参照。
+// ステップと星の数・形の対応はgalaxy.jsのsetGalaxyGrowth(GALAXY_GROWTH_MAX_STEPS・GALAXY_MORPH_*)を参照。
 //
 // 使い方(record.jsが呼ぶ):
 //   createGalaxyGrowth(scene, galaxy, camera)  ... 1回。保存済みの育ちを銀河へ反映する
@@ -43,21 +50,23 @@ import { createCaptionBox, makeCaptionController, getSourceCaption } from './cap
 const GROWTH_API_URL = '';
 const API_TIMEOUT_MS = 1500; // クリック時、サーバーの返事を待つ最大時間。超えたらこの端末だけで育てる
 
-// 「何クリックで銀河が完成するか」(腕9本+巻きが上限まで育ち切る=GALAXY_GROWTH_MAX_STEPS)。仮値。
+// 「何クリックで星がすべてなくなる(バルジだけになる)か」(=GALAXY_GROWTH_MAX_STEPS)。仮値。
+// 1クリックで消える星の数 = galaxy.jsのGALAXY_TOTAL_PARTICLE_COUNT ÷ この値(92万個÷10万 ≒ 9個)。
+// 「1クリック=ちょうど星1個」にしたいときは、この値をGALAXY_TOTAL_PARTICLE_COUNTと同じにする。
 // 目安: 想定する訪問数 × 「starburstまで辿り着いてクリックする人の割合」。
 // 例: 20万訪問・半数がクリック → 10万。実際の数字を見ながら、あとから変えてよい。
 const CLICKS_TO_COMPLETE = 100000;
 // サーバーに繋がない(GROWTH_API_URLが空)ときの「1クリックの重さ」。確認用に、1クリック=1ステップ
-// (腕3本の形成の1/10)にして、1回の演出で育ちが目に見えるようにしてある。
+// (全体の1/100=星の1%)にして、1回の演出で減りが目に見えるようにしてある。
 const LOCAL_PREVIEW_CLICKS_PER_STEP = 1;
 const FETCH_CACHE_MINUTES = 10; // 最新の合計を取りに行く間隔の下限(この間は、最後に知っていた値を使う)
 
-const STORAGE_KEY = 'galaxyGrowthSteps';       // 最後に知っていた「育ち具合」(サーバーに繋がらないとき・次回起動の初期表示用)
+const STORAGE_KEY = 'galaxyStarsSavedSteps';   // 最後に知っていた「減り具合」(旧仕様の'galaxyGrowthSteps'とは単位が違うので、キーを変えてある)(サーバーに繋がらないとき・次回起動の初期表示用)
 const CLICKED_KEY = 'galaxyGrowthEverClicked'; // この訪問者が、過去にstarburstをクリックしたことがあるか
 const FETCHED_AT_KEY = 'galaxyGrowthFetchedAt'; // 最後にサーバーから合計を取った時刻(ミリ秒)
 const LAST_CLICK_DAY_KEY = 'galaxyGrowthLastClickDay'; // 最後にサーバーへ送った日(UTCのYYYY-MM-DD)
 
-const SAVING_TEXT = "I'm saving them.";
+const SAVING_TEXT = "I’m saving them.";
 const SAVING_TEXT_TOP_PERCENT = 88; // 画面の上から何%の位置に出すか(仮値。戴冠のテキストは75)
 const SAVING_WORK = 'J.D. Salinger — The Catcher in the Rye'; // 出典。文字と同じく、一度出したら出したまま
 let savingWorkActive = false; // 出典を出している状態か(他の演出が共有の出典ボックスを使って消したあと、出し直すために覚えておく)
@@ -68,8 +77,13 @@ const NOTE_COUNT = 24;                          // 1回のクリックで飛ば�
 const NOTE_GLYPHS = ['♪', '♫', '♩', '♬'];
 const NOTE_COLOR = 0xffe2a0;                    // 音符・粒子の色(仮値)
 const NOTE_SIZE_FRACTION = 0.035;               // 音符の大きさ。着地点での「画面の高さ」に対する比率(仮値)
-const NOTE_START_DISTANCE_RATIO = 0.35;         // カメラ→銀河の距離のうち、カメラ側からこの位置で現れる(0=カメラの目の前、1=銀河)
-const NOTE_SPAWN_SPREAD_SECONDS = 1.6;          // 音符を出し始めてから出し終わるまで(秒)
+const NOTE_END_DISTANCE_RATIO = 0.35;           // カメラ→銀河の距離のうち、カメラ側のこの位置まで来て消える(0=カメラの目の前、1=銀河)
+const NOTE_DOT_SIZE_RATIO = 0.22;               // 飛び立つ直後の光の点の大きさ = 音符の大きさ × この比率(銀河の星くらい)
+const NOTE_START_SCALE = 0.5;                   // 音符になりはじめの大きさ(最終の大きさに対する比率)
+const NOTE_REVEAL_START = 0.2;                  // 飛行の進み具合(0〜1)がここから、点が音符へ入れ替わりはじめ…
+const NOTE_REVEAL_END = 0.6;                    // …ここで完全に音符になる
+const NOTE_FADE_OUT_START = 0.82;               // ここから、カメラの手前でふわりと消えはじめる
+const NOTE_SPAWN_SPREAD_SECONDS = 1.6;          // 星が飛び立ちはじめてから、飛び立ち終わるまで(秒)
 const NOTE_FLIGHT_MIN_SECONDS = 5.4;            // 1個の音符が飛ぶのにかかる秒数の範囲
 const NOTE_FLIGHT_MAX_SECONDS = 7.6;
 const NOTE_ARC_RATIO = 0.15;                    // 軌道の膨らみ(画面の高さに対する最大比率)。0で一直線
@@ -80,7 +94,7 @@ const PUFF_LIFE_SECONDS = 1.6;
 const PUFF_SIZE_RATIO = 0.22;                   // 粒子1個の大きさ = 音符の大きさ × この比率
 const PUFF_SPEED_RATIO = 0.8;                   // 散る速さ = 音符の大きさ × この比率(1秒あたり)
 
-const STEP_SMOOTHING = 3.0;                     // 銀河の粒子が増えていく滑らかさ(大きいほど素早く追従)
+const STEP_SMOOTHING = 3.0;                     // 銀河の星が減っていく滑らかさ(大きいほど素早く追従)
 
 // ── 保存 ─────────────────────────────────────
 function loadSteps() {
@@ -161,6 +175,23 @@ function makeNoteTexture(glyph) {
   return texture;
 }
 
+// ── 飛び立つ星の光の点(ぼんやり丸い光。画像ファイルは不要) ──
+function makeDotTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(0.35, 'rgba(255, 255, 255, 0.55)');
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 // ── 音符が変わる粒子(銀河の子なので、銀河と一緒に回る。ローカル座標で動かす) ──
 function createPuff(galaxy) {
   const positions = new Float32Array(PUFF_MAX * 3);
@@ -186,11 +217,11 @@ function createPuff(galaxy) {
 }
 
 export function createGalaxyGrowth(scene, galaxy, camera) {
-  const steps = loadSteps(); // まず「最後に知っていた育ち」で表示しておき、サーバーの最新値が届いたら置き換える
+  const steps = loadSteps(); // まず「最後に知っていた減り具合」で表示しておき、サーバーの最新値が届いたら置き換える
   setGalaxyGrowth(galaxy, steps);
   const growth = {
     scene, galaxy, camera,
-    committedSteps: steps,   // 確定している育ち(サーバーの合計、またはこの端末だけの値)
+    committedSteps: steps,   // 確定している減り具合(サーバーの合計、またはこの端末だけの値)
     targetSteps: steps,      // 音符が着くたびに増える、見た目の目標
     shownSteps: steps,       // 実際に銀河へ反映しているステップ数(目標へ滑らかに追従)
     contributionsThisVisit: 0,
@@ -198,6 +229,7 @@ export function createGalaxyGrowth(scene, galaxy, camera) {
     elapsed: 0,
     notes: [],
     textures: NOTE_GLYPHS.map(makeNoteTexture),
+    dotTexture: makeDotTexture(),
     puff: createPuff(galaxy),
     savingCaption: null,
   };
@@ -235,6 +267,13 @@ function showSavingText(growth) {
 
 // 共有の出典ボックス(右下)を他の演出が使って消えてしまったとき、出典を出し直す。
 // (「I'm saving them.」を出している間だけ有効。出していなければ何もしない)
+// ★ 2026-10-20 追加(ご指示反映): 「I'm saving them.」の出典(work名)を永久表示にするための判定。
+//   共有の出典ボックスは他の演出(軸ラベルのクリック等)も使うため、これがtrueの間は
+//   他の演出が出典ボックスを書き換えたり消したりしないよう、呼び出し側(main.js)で確認する。
+export function isSavingWorkActive() {
+  return savingWorkActive;
+}
+
 export function reapplySavingWork() {
   if (savingWorkActive) getSourceCaption().setText(SAVING_WORK);
 }
@@ -256,19 +295,16 @@ const _forward = new THREE.Vector3();
 const _world = new THREE.Vector3();
 const _ndc = new THREE.Vector3();
 
-// 画面に映っている腕の上の点を選ぶ(カメラが銀河のごく一部しか映さない構図でも、
-// 画面の外に着いてしまわないように)。見つからなければ画面の中心に最も近い点。
-function pickTarget(growth, arms, out) {
+// 画面に映っている星(いま銀河に残っている粒)の位置を選ぶ(カメラが銀河のごく一部しか映さない
+// 構図でも、画面の外に着いてしまわないように)。見つからなければ画面の中心に最も近い点。
+// 星が1つも残っていなければ銀河の中心(バルジ)になる。
+function pickTarget(growth, out) {
   const { galaxy, camera } = growth;
   let best = null;
   let bestScore = Infinity;
   const candidate = new THREE.Vector3();
   for (let tries = 0; tries < 40; tries++) {
-    const arm = arms[Math.floor(Math.random() * arms.length)];
-    const ratio = 0.15 + 0.85 * Math.sqrt(Math.random());
-    getGalaxyArmPoint(galaxy, arm, ratio, candidate);
-    candidate.x += (Math.random() - 0.5) * GALAXY_RADIUS * 0.03;
-    candidate.z += (Math.random() - 0.5) * GALAXY_RADIUS * 0.03;
+    getGalaxyRandomStarPoint(galaxy, candidate);
     galaxy.starsGroup.localToWorld(_world.copy(candidate));
     _ndc.copy(_world).project(camera);
     const score = _ndc.z > 1 ? Infinity : Math.max(Math.abs(_ndc.x), Math.abs(_ndc.y));
@@ -280,59 +316,62 @@ function pickTarget(growth, arms, out) {
 
 function spawnNotes(growth, previousSteps) {
   const { camera, galaxy, scene } = growth;
-  const arms = getGalaxyGrowingArms(previousSteps);
   galaxy.starsGroup.getWorldPosition(_center);
   const distance = camera.position.distanceTo(_center);
   const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const visibleHeight = 2 * distance * tanHalfFov;      // 銀河の距離で画面に映る高さ
-  const noteSize = visibleHeight * NOTE_SIZE_FRACTION;  // 着地点での大きさがこの比率になる
+  const noteSize = visibleHeight * NOTE_SIZE_FRACTION;  // 銀河の距離での音符の大きさ(近づくと遠近法でさらに大きく見える)
   growth.noteSize = noteSize;
   growth.puff.points.material.size = noteSize * PUFF_SIZE_RATIO;
 
+  // カメラ側の終点は「カメラから見た位置」で持っておき、毎フレーム、いまのカメラから求め直す
+  // (カメラが銀河と一緒に回っていても、音符は視野の中に来る)。
+  growth.endDistance = distance * NOTE_END_DISTANCE_RATIO;
+  const halfHeight = growth.endDistance * tanHalfFov;
+  const halfWidth = halfHeight * camera.aspect;
   camera.updateMatrixWorld();
   _right.setFromMatrixColumn(camera.matrixWorld, 0);
   _up.setFromMatrixColumn(camera.matrixWorld, 1);
-  _forward.setFromMatrixColumn(camera.matrixWorld, 2).negate();
-  const startDistance = distance * NOTE_START_DISTANCE_RATIO;
-  const halfHeight = startDistance * tanHalfFov;
-  const halfWidth = halfHeight * camera.aspect;
 
   growth.stepGainPerNote = (growth.committedSteps - previousSteps) / NOTE_COUNT;
   for (let i = 0; i < NOTE_COUNT; i++) {
-    const material = new THREE.SpriteMaterial({
-      map: growth.textures[i % growth.textures.length],
-      color: NOTE_COLOR, transparent: true, opacity: 0,
-      depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
-    });
-    const sprite = new THREE.Sprite(material);
-    sprite.scale.set(noteSize, noteSize, 1);
-    sprite.renderOrder = 10;
-    sprite.visible = false;
-    scene.add(sprite);
-
-    const start = new THREE.Vector3().copy(camera.position)
-      .addScaledVector(_forward, startDistance)
-      .addScaledVector(_right, (Math.random() * 2 - 1) * 0.9 * halfWidth)
-      .addScaledVector(_up, (Math.random() * 2 - 1) * 0.9 * halfHeight);
-    const targetLocal = pickTarget(growth, arms, new THREE.Vector3());
+    const makeSprite = (map) => {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map, color: NOTE_COLOR, transparent: true, opacity: 0,
+        depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      sprite.renderOrder = 10;
+      sprite.visible = false; // 飛び立つまでは出さない
+      scene.add(sprite);
+      return sprite;
+    };
     // 軌道の膨らみは、画面の中で見える向き(上下左右)に付ける。
     const arcDirection = new THREE.Vector3()
       .addScaledVector(_right, Math.random() * 2 - 1)
       .addScaledVector(_up, Math.random() * 2 - 1);
 
     growth.notes.push({
-      sprite, start, targetLocal, arcDirection,
+      dot: makeSprite(growth.dotTexture),                                  // 飛び立つ直後の、星の光の点
+      sprite: makeSprite(growth.textures[i % growth.textures.length]),     // 近づくにつれて現れる音符
+      targetLocal: pickTarget(growth, new THREE.Vector3()),                // 飛び立つ星の位置(銀河ローカル)
+      endX: (Math.random() * 2 - 1) * 0.9 * halfWidth,                     // カメラ側の終点(カメラから見た位置)
+      endY: (Math.random() * 2 - 1) * 0.9 * halfHeight,
+      arcDirection,
       arcSize: visibleHeight * NOTE_ARC_RATIO * Math.random(),
       delay: (i / NOTE_COUNT) * NOTE_SPAWN_SPREAD_SECONDS,
       duration: THREE.MathUtils.lerp(NOTE_FLIGHT_MIN_SECONDS, NOTE_FLIGHT_MAX_SECONDS, Math.random()),
       t: 0,
+      launched: false,
       seed: Math.random() * Math.PI * 2,
     });
   }
 }
 
-// 音符が銀河に着いた: その場で粒子の群れに変わり、銀河の粒子が1個ぶん増える。
-function convertNoteToParticles(growth, note) {
+// 星が銀河を離れた: その場に小さな光の粒が散り、銀河の星が1個ぶん減る。
+function launchNote(growth, note) {
+  note.launched = true;
+  note.dot.visible = true;
+  note.sprite.visible = true;
   const puff = growth.puff;
   const scale = growth.galaxy.starsGroup.scale.x || 1; // 銀河は拡大されているので、ローカルの速度はその分小さく
   const speed = (growth.noteSize * PUFF_SPEED_RATIO) / scale;
@@ -355,32 +394,62 @@ function convertNoteToParticles(growth, note) {
 }
 
 function disposeNote(growth, note) {
+  growth.scene.remove(note.dot);
   growth.scene.remove(note.sprite);
-  note.sprite.material.dispose(); // テクスチャは使い回しているので、マテリアルだけ破棄
+  note.dot.material.dispose(); // テクスチャは使い回しているので、マテリアルだけ破棄
+  note.sprite.material.dispose();
 }
 
+const _camPos = new THREE.Vector3();
+const _end = new THREE.Vector3();
+const smooth01 = (a, b, x) => {
+  const t = THREE.MathUtils.clamp((x - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
 function updateNotes(growth, deltaSeconds) {
+  if (growth.notes.length > 0) {
+    growth.camera.updateMatrixWorld();
+    _camPos.setFromMatrixPosition(growth.camera.matrixWorld);
+    _right.setFromMatrixColumn(growth.camera.matrixWorld, 0);
+    _up.setFromMatrixColumn(growth.camera.matrixWorld, 1);
+    _forward.setFromMatrixColumn(growth.camera.matrixWorld, 2).negate();
+  }
   for (let i = growth.notes.length - 1; i >= 0; i--) {
     const note = growth.notes[i];
     note.t += deltaSeconds;
     const k = (note.t - note.delay) / note.duration;
     if (k < 0) continue; // まだ出番ではない
+    if (!note.launched) launchNote(growth, note);
     if (k >= 1) {
-      convertNoteToParticles(growth, note);
       disposeNote(growth, note);
       growth.notes.splice(i, 1);
       continue;
     }
-    // 着地点は銀河の自転に合わせて動くので、毎フレーム、ローカル座標からワールドへ求め直す。
+    // 出発点の星は銀河の自転に合わせて動くので、毎フレーム、ローカル座標からワールドへ求め直す。
     growth.galaxy.starsGroup.localToWorld(_world.copy(note.targetLocal));
+    _end.copy(_camPos)
+      .addScaledVector(_forward, growth.endDistance)
+      .addScaledVector(_right, note.endX)
+      .addScaledVector(_up, note.endY);
     const eased = k * k * (3 - 2 * k);
-    note.sprite.position.lerpVectors(note.start, _world, eased)
+    const position = note.dot.position.lerpVectors(_world, _end, eased)
       .addScaledVector(note.arcDirection, Math.sin(Math.PI * k) * note.arcSize);
-    note.sprite.visible = true;
-    note.sprite.material.opacity = Math.min(k / 0.12, 1); // 出始めはふわっと
+    note.sprite.position.copy(position);
+
+    // 点 → 音符への入れ替わりと、最後のふわりと消える動き。
+    const reveal = smooth01(NOTE_REVEAL_START, NOTE_REVEAL_END, k);
+    const fadeOut = 1 - smooth01(NOTE_FADE_OUT_START, 1, k);
+    const twinkle = 0.85 + 0.15 * Math.sin(growth.elapsed * 9 + note.seed);
+    note.dot.material.opacity = (1 - reveal) * twinkle;
+    note.sprite.material.opacity = reveal * fadeOut;
+    const dotSize = growth.noteSize * NOTE_DOT_SIZE_RATIO;
+    note.dot.scale.set(dotSize, dotSize, 1);
+    const noteScale = growth.noteSize * THREE.MathUtils.lerp(NOTE_START_SCALE, 1, smooth01(0, 1, k));
+    note.sprite.scale.set(noteScale, noteScale, 1);
     note.sprite.material.rotation = Math.sin(growth.elapsed * 3 + note.seed) * 0.35;
   }
-  // 全部着き終わったら、目標を保存済みの値にぴったり合わせる(浮動小数の誤差を残さない)
+  // 全部飛び立ったら、目標を保存済みの値にぴったり合わせる(浮動小数の誤差を残さない)
   if (growth.notes.length === 0) growth.targetSteps = growth.committedSteps;
 }
 
@@ -449,11 +518,11 @@ export function playGalaxyContribution(growth) {
   return true;
 }
 
-// 開発用: 育ちを最初(腕3本)に戻す。ブラウザのコンソールなどから呼ぶ想定。
+// 開発用: 減りを最初(星が全部ある・レコードの見た目)に戻す。ブラウザのコンソールなどから呼ぶ想定。
 export function resetGalaxyGrowth(growth) {
   // 育ち具合だけでなく、クリック済みフラグ・サーバー取得時刻・最後に送った日も消して、まっさらに戻す
   // (残しておくと、サーバーに繋いだ状態で「今日はもう送った」扱いになり、テストで送れなくなる)。
-  [STORAGE_KEY, CLICKED_KEY, FETCHED_AT_KEY, LAST_CLICK_DAY_KEY].forEach((key) => {
+  [STORAGE_KEY, 'galaxyGrowthSteps', CLICKED_KEY, FETCHED_AT_KEY, LAST_CLICK_DAY_KEY].forEach((key) => {
     try { localStorage.removeItem(key); } catch (e) { /* 何もしない */ }
   });
   growth.savingCaption?.hide();
@@ -472,7 +541,7 @@ export function updateGalaxyGrowth(growth, deltaSeconds) {
   updateNotes(growth, deltaSeconds);
   updatePuff(growth, deltaSeconds);
 
-  // 銀河の粒子の数・巻きは、目標へ滑らかに追従させる(音符が着くたびに、少しずつ増える)。
+  // 銀河の星の数・形は、目標へ滑らかに追従させる(音符が着くたびに、少しずつ減る)。
   if (growth.shownSteps !== growth.targetSteps) {
     const follow = 1 - Math.exp(-STEP_SMOOTHING * deltaSeconds);
     growth.shownSteps += (growth.targetSteps - growth.shownSteps) * follow;
