@@ -5,7 +5,6 @@ import { TRIPOD_ANGULAR_SPEED, RECORD_ANCHOR, TRIPOD_GROUND_Y } from './universe
 import { ORBIT_RADIUS_BASE, startSolarSystem } from './solarSystem.js';
 import { GALAXY_RADIUS, GALAXY_POINT_SIZE, setGalaxyHole, createStarPointsMaterial, setGalaxySpinBoost, setGalaxyDifferentialRotation } from './galaxy.js';
 import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
-import { createAStar } from './aStar.js';
 import { createGalaxyGrowth, refreshGalaxyGrowth, playGalaxyContribution, updateGalaxyGrowth } from './galaxyGrowth.js';
 import { createTrumpetToMetaphony } from './trumpet.js';
 
@@ -59,6 +58,7 @@ const _cubeCameraOffset = new THREE.Vector3(0, CUBE_CAMERA_Y_OFFSET, 0); // 毎�
 //   少し上(=ihがいる高さ付近)を撮影点にする(仮値。見ながら調整してください)。
 const GOLDEN_RING_CUBE_CAMERA_Y_OFFSET = AXIS_LENGTH * 0.35;
 const _goldenRingCubeCameraOffset = new THREE.Vector3(0, GOLDEN_RING_CUBE_CAMERA_Y_OFFSET, 0);
+const _goldenRingWorldPos = new THREE.Vector3(); // goldenRingのワールド座標(carouselRoot縮小中もずれないよう取得用)
 const MIRROR_TARGET_PAGE = 'prism2.html';               // 鏡クリックで遷移する先
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
@@ -175,7 +175,9 @@ const BULGE_CORE_COLOR = 0xfff6c9;          // バー本体よりやや明るい
 //     (BULGE_BLOOM_INTENSITYを0.15→0.06に弱めた件)は、粒自体が縮小されたことで
 //     にじみの絶対量も下がっているはずだが、値は前回のまま残してある。見ながら
 //     必要なら調整してください。
-const BULGE_BLOOM_INTENSITY = 0.25;         // 0〜1。Bloomの強さ(0=完全オフ、1=通常と同じ強さ。仮値)
+// ★ 2026-10-28: 0.25→0(ご指示反映)。バルジはUnrealBloomを通さず、加算合成+円形ソフトシェーダーだけで描く
+//   (=銀河プレビューと同じ粒の見え方)。にじみを少し戻したいときは0.05前後から上げてください。
+const BULGE_BLOOM_INTENSITY = 0;            // 0〜1。Bloomの強さ(0=完全オフ、1=通常と同じ強さ)
 const BULGE_PARTICLE_COUNT = 6000;          // 900→6000(仮値。粒を小さくした分、密度で光の塊に見せる)
 // ★ 2026-10-11 修正(ご指摘反映): 「バルジの粒が銀河の粒より小さい/暗い」の本当の原因。
 //   銀河の粒は「カメラ距離10倍化を打ち消すため」GALAXY_POINT_SIZE=680という大きなuSizeを
@@ -209,6 +211,10 @@ const BULGE_NEAR_FADE_RANGE = ORBIT_RADIUS_BASE * 0.35;
 // バー/コアそれぞれの外縁を、galaxy.js側と同じ考え方でソフトにフェードさせる比率
 // (中心からの相対半径[0,1]のうち、このぶんの幅を1→0へかける。仮値)。
 const BULGE_EDGE_FADE = 0.35;
+// ★ 2026-10-28: 外縁のフェードと縁の粒の縮みを使うか(ご指示反映)。プレビューのバルジは縁の処理が
+//   なく、全粒が濃さ1・大きさは乱数(0.3〜1.0)だけで決まる。それに合わせるためfalseにした。
+//   trueにすると従来どおり、外縁の粒が薄く・小さくなる(BULGE_EDGE_FADE/BULGE_EDGE_SHRINKが効く)。
+const BULGE_EDGE_SOFTEN = false;
 // ★ 2026-09-16 追加(ご指示反映): 「出現の際に銀河に穴をあけて、バルジから腕が
 //   生えてるように見せたい」への対応。bar_bulge_preview.html側のGALAXY_INNER_RADIUS_RATIO
 //   と同じ考え方(バーの半長に対する比率)で、銀河円盤側にあける穴の半径を決める。
@@ -305,7 +311,7 @@ function makeBulgePlaceholder() {
     barColors[i * 3 + 2] = barColor.b;
     // 中心からの相対半径(長軸基準の概算)で外縁をソフトにフェード。
     const relRadius = Math.min(Math.hypot(p.x, p.y, p.z) / BULGE_BAR_HALF_LENGTH, 1);
-    const edge = 1 - edgeSmoothstep(1 - BULGE_EDGE_FADE, 1, relRadius);
+    const edge = BULGE_EDGE_SOFTEN ? 1 - edgeSmoothstep(1 - BULGE_EDGE_FADE, 1, relRadius) : 1;
     barAlphas[i] = edge;
     const sizeJitter = BULGE_SIZE_JITTER_MIN + Math.random() * (1 - BULGE_SIZE_JITTER_MIN);
     barScales[i] = sizeJitter * (1 - BULGE_EDGE_SHRINK * (1 - edge));
@@ -344,7 +350,7 @@ function makeBulgePlaceholder() {
     coreColors[i * 3 + 1] = coreColor.g;
     coreColors[i * 3 + 2] = coreColor.b;
     const relRadius = Math.min(Math.hypot(p.x, p.y, p.z) / coreRadius, 1);
-    const edge = 1 - edgeSmoothstep(1 - BULGE_EDGE_FADE, 1, relRadius);
+    const edge = BULGE_EDGE_SOFTEN ? 1 - edgeSmoothstep(1 - BULGE_EDGE_FADE, 1, relRadius) : 1;
     coreAlphas[i] = edge;
     const sizeJitter = BULGE_SIZE_JITTER_MIN + Math.random() * (1 - BULGE_SIZE_JITTER_MIN);
     coreScales[i] = sizeJitter * (1 - BULGE_EDGE_SHRINK * (1 - edge));
@@ -386,38 +392,48 @@ export function setBulgeBrightness(record, value) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// ▼▼▼ starburst(銀河上の星): クリックで銀河が育つ ▼▼▼
+// ▼▼▼ クリック星(Aスター): クリックで銀河が育つ ▼▼▼
 // ══════════════════════════════════════════════════════════════
-// ★ 2026-10-11 追加(ご指示反映): 「starburstの登場はトーンアームクリック後。starburstをクリックすると
-//   音符がカメラ側から飛んできて粒子に変わり、銀河の一部になる」。
-//   starburst自体はmain.js側が持っているオブジェクトなので、main.jsが生成直後に
-//   bindStarburst(record, starburstObject)で渡す。登場(visible=true)はこのファイルが、
-//   トーンアームを置き終えた瞬間にrevealStarburstで行う(それまでは非表示に保つ)。
-//   ★ main.js側は「銀河俯瞰になったらstarburstをvisible=trueにする」処理を外してください
-//     (残っていると、トーンアームより前に出てしまいます)。
-const STARBURST_HIT_ANGLE_DEG = 2.5; // クリック判定の大きさ。カメラから見た角度(距離や画角が変わっても同じ見かけの大きさ)
+// ★ 2026-10-27 仕様変更(ご指示反映): 以前は「starburst」がクリックされて銀河が育つ星を兼ねていて、
+//   銀河中心の少し上(main.jsのSTARBURST_OVERVIEW_OFFSET)に置かれていた。この
+//   「バルジ側の上についている」仕様は削除した。
+//     ・クリックされる星 = Aスター(aStar.jsのcreateAStar)。バルジの中心に置く。
+//     ・starburstは「carouselを拡大したときのつなぎ」専用になった(main.jsのanimate参照)。
+//       このファイルはstarburstを一切扱わない(クリックもされない)。
+//   Aスター自体はmain.js側で生成し、bindClickStar(record, aStarObject)で渡す。
+//   バルジの子として原点(バルジ中心)に付けるので、バルジの表示/非表示(太陽系軌道と同じ条件)に
+//   自動で連動する。登場(visible=true)は、トーンアームを置き終えた瞬間にrevealClickStarで行う
+//   (それまでは非表示に保つ)。
+const CLICK_STAR_HIT_FOV_RATIO = 0.04; // クリック判定の半径 = 現在のfov(縦)の4%。fovが0.3°まで狭まっても画面上で同じ見かけの大きさになる
 
-export function bindStarburst(record, object3D) {
+export function bindClickStar(record, object3D) {
   if (!record) return;
-  record.starburst = object3D;
-  if (object3D) object3D.visible = record.starburstRevealed; // 登場前は必ず非表示
+  record.clickStar = object3D;
+  if (!object3D) return;
+  if (record.bulge && object3D.parent !== record.bulge) {
+    object3D.position.set(0, 0, 0); // バルジ中心
+    record.bulge.add(object3D);
+  }
+  // 表示/非表示はmain.js(俯瞰中だけtrue)とバルジの表示(8°条件)が決める。ここでは触らない。
 }
 
-function revealStarburst(record) {
-  record.starburstRevealed = true;
-  if (record.starburst) record.starburst.visible = true;
-  // 「I'm saving them.」はstarburstをクリックしたときに出す(galaxyGrowth.jsのplayGalaxyContribution)。
+function revealClickStar(record) {
+  record.clickStarRevealed = true;
+  if (record.clickStar) record.clickStar.visible = true;
+  // 「I'm saving them.」はクリックしたときに出す(galaxyGrowth.jsのplayGalaxyContribution)。
   // ここ(トーンアームを置き終えた登場時点)では出さない。
 }
 
-function hitsStarburst(record, raycaster) {
-  const starburst = record.starburst;
-  if (!starburst || !starburst.visible || !record.starburstRevealed) return false;
+function hitsClickStar(record, raycaster) {
+  const star = record.clickStar;
+  if (!star || !star.visible) return false; // 登場はmain.js(俯瞰中)とバルジの8°条件で決まる。トーンアーム待ちは撤廃
+  // バルジが隠れている間(8°未満。main.jsが仰角で切り替え)は、見えていないので当たり判定もしない。
+  if (record.bulge && !record.bulge.visible) return false;
   // 小さな星(Points等)はRaycasterのintersectObjectでは当たりにくいので、
   // 「視線(レイ)と星の中心との距離」が、カメラから見て一定の角度以内かどうかで判定する。
-  const position = starburst.getWorldPosition(new THREE.Vector3());
+  const position = star.getWorldPosition(new THREE.Vector3());
   const distance = record.camera.position.distanceTo(position);
-  const tolerance = distance * Math.tan(THREE.MathUtils.degToRad(STARBURST_HIT_ANGLE_DEG));
+  const tolerance = distance * Math.tan(THREE.MathUtils.degToRad(record.camera.fov * CLICK_STAR_HIT_FOV_RATIO));
   return raycaster.ray.distanceToPoint(position) < tolerance;
 }
 
@@ -1015,8 +1031,8 @@ function placeTonearmOnRecord(record) {
       setGalaxyDifferentialRotation(record.galaxy, false);
       // ★ 追加: アームが置き終わってから2秒後に、ラッパ(Metaphonyホーン)を発動する。
       gsap.delayedCall(TRUMPET_DELAY_SECONDS, () => triggerTrumpet(record));
-      // ★ 追加(2026-10-11): トーンアームを置き終えたら、starburstが登場する(クリックで銀河が育つ)。
-      revealStarburst(record);
+      // ★ 追加(2026-10-11)・2026-10-27変更: トーンアームを置き終えたら、Aスターが登場する(クリックで銀河が育つ)。
+      revealClickStar(record);
     },
   });
 }
@@ -1051,6 +1067,36 @@ const TRUMPET_FLIP_VERTICAL_180 = true; // true=水平軸まわりに180度回�
 // (=画面内での回転になるので歪まない)、進行方向だけを画面内で上下に振れる。
 // 角度は「進行方向からUwに向かう向き」を正としているので、正の値で上向きに傾く。
 const TRUMPET_TILT_UP_DEGREES = 30; // 進行方向を水平から何度上に傾けるか
+// ★ 2026-10-20 追加(ご指示反映): 「trumpetの線が暗くて見えない」への対応(trumpetだけ明るくする)。
+//   銀河俯瞰ではrenderer.toneMappingExposureを0.005倍まで絞るため、同じシーンにあるtrumpetの
+//   線も一緒に暗くなっていた。ポストプロセス(composer)経由だと、マテリアル側で
+//   toneMapped=falseにしても露出は避けられない(露出は最終パスでかかるため)ので、
+//   「現在の露出の逆数」をtrumpetの線の色へ掛けて打ち消す方式にしている。
+//   露出が1のときは倍率も1なので、俯瞰前の見た目は変わらない。
+//   TRUMPET_EXPOSURE_COMPENSATION: 1.0=露出を完全に打ち消す(通常の明るさで見える)。
+//     0.5=半分だけ(対数で)打ち消す。0=無効(従来どおり)。光りすぎる(bloomが強い)ときは下げる。
+//   TRUMPET_MAX_GAIN: 色に掛ける倍率の上限(極端な値でbloomが画面を覆うのを防ぐ保険)。
+const TRUMPET_EXPOSURE_COMPENSATION = 1.0;
+const TRUMPET_MAX_GAIN = 200;
+function applyTrumpetExposureCompensation(record) {
+  const { trumpetGroup, renderer } = record;
+  if (!trumpetGroup || !trumpetGroup.visible || !renderer) return;
+  if (!trumpetGroup.userData.brightMats) {
+    // 初回だけ、trumpet配下のマテリアルとその「元の色」を控えておく(毎フレーム掛け算が積み上がらないように)
+    const mats = new Set();
+    trumpetGroup.traverse((o) => {
+      const m = o.material;
+      if (!m) return;
+      (Array.isArray(m) ? m : [m]).forEach((mm) => { if (mm.color && mm.color.isColor) mats.add(mm); });
+    });
+    trumpetGroup.userData.brightMats = [...mats].map((m) => ({ m, base: m.color.clone() }));
+  }
+  const exposure = Math.max(renderer.toneMappingExposure, 1e-4);
+  const gain = Math.min(Math.pow(1 / exposure, TRUMPET_EXPOSURE_COMPENSATION), TRUMPET_MAX_GAIN);
+  for (const { m, base } of trumpetGroup.userData.brightMats) {
+    m.color.copy(base).multiplyScalar(gain);
+  }
+}
 function triggerTrumpet(record) {
   const { trumpetGroup, trumpetApi, galaxyCenter } = record;
   if (!trumpetGroup || !trumpetApi || trumpetGroup.userData.triggered) return; // 二重発火防止
@@ -1410,22 +1456,9 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   }
   galaxy.starsGroup.add(bulge);
 
-  // ★ Aスター(射手座の矢と同じ星)をバルジ中心に置く。矢が伏線で、こちらが正体。
-  //   ・galaxy.starsGroupの子(=銀河と一緒に回る。中心なので位置は動かない)。
-  //   ・starsGroupが俯瞰でGALAXY_OVERVIEW_SCALE倍になるので、ローカルscaleは割っておく
-  //     (見た目のサイズがBULGE_BAR_HALF_LENGTH基準になる)。
-  //   ・登場は非表示から。main.js側が、starburstの星が出るのと同じタイミング
-  //     (銀河俯瞰=overviewActive)でvisible=trueにする。
-  //   ・idleRate>0なので、止まっていても中心から粒が漂って消え続ける。
-  const bulgeStar = createAStar(scene, { idleRate: 12, life: 2.2, size: 0.35 });
-  galaxy.starsGroup.add(bulgeStar);
-  bulgeStar.position.set(0, 0, 0);
-  // 大きさ: 「周りのバルジ粒子(BULGE_BAR_POINT_SIZE=HALF_LENGTH×0.022)より少し大きく、オレンジが見える程度」。
-  //   暈の直径 = 1.6 × (この比率 × BULGE_BAR_HALF_LENGTH)。0.03なら暈の直径は約0.05(粒子の2倍強)で、
-  //   見えるオレンジの核はそのおよそ半分。大きさを変えたいときはこの比率だけ触る(仮値)。
-  const BULGE_STAR_SIZE_RATIO = 0.03;
-  bulgeStar.scale.setScalar(BULGE_BAR_HALF_LENGTH * BULGE_STAR_SIZE_RATIO / GALAXY_OVERVIEW_SCALE);
-  bulgeStar.visible = false;
+  // ★ 2026-10-26 廃止(ご指示反映): バルジ中心のAスター(createAStar。射手座の矢と同じ星)は廃止した。
+  //   ★ 2026-10-27 更新: Aスターは「クリックされる星」として復活させた。ただし生成はmain.js側で行い、
+  //   bindClickStar(record, aStar)でバルジの子として渡す(上のクリック星ブロック参照)。
 
   // ★ 2026-10-11 追加(ご指示反映): 銀河の「育ち」。腕3本・粒子1/3から始まり、starburstをクリック
   //   するたびに音符→粒子の演出とともに育つ(galaxyGrowth.js。保存済みの育ちはここで反映される)。
@@ -1485,8 +1518,8 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
     scene, renderer, camera, galaxy, solarSystem, universe,
     mirrorGroup, mirrorVisualAnchor, mirrorVisualHome: mirrorVisualAnchor.position.clone(),
     crossfadeRing,
-    pyramidMesh, bananaMesh, crownGroup, bulge, bulgeStar, tonearm, trumpetGroup, trumpetApi,
-    growth, starburst: null, starburstRevealed: false,
+    pyramidMesh, bananaMesh, crownGroup, bulge, tonearm, trumpetGroup, trumpetApi,
+    growth, clickStar: null, clickStarRevealed: false,
     galaxyCenter: galaxy.starsGroup.position.clone(), // ← 銀河の中心(生成時点で固定。針・ラッパの基準。太陽系の中心はrevealSolarSystemで別途求める)
     coronationStarted: false, // ← バナナクリック演出の二重発火防止
     // ★ 2026-09-16 追加(バグ修正): 「バルジが出現していない」への対応。戴冠演出中、
@@ -1562,9 +1595,9 @@ export function tryRecordClick(record, raycaster, { onNavigate } = {}) {
     }
   }
 
-  // starburst: トーンアームを置いたあとに登場する星。クリックで銀河が育つ演出を始める。
+  // Aスター: トーンアームを置いたあとに登場する星。クリックで銀河が育つ演出を始める。
   // (今回の訪問で育てられる回数を使い切っていたら、何も起きずにfalseを返す=クリックは他へ通す)
-  if (hitsStarburst(record, raycaster) && playGalaxyContribution(record.growth)) return true;
+  if (hitsClickStar(record, raycaster) && playGalaxyContribution(record.growth)) return true;
 
   // 鏡: three.jsのRaycasterはvisible=falseでも判定してしまう(明示的にチェックしないと
   // 素通りする)ため、mirrorVisualAnchor.visible(=tripodRingSwap.js側で鏡tripodが実際に
@@ -1601,13 +1634,12 @@ let trumpetElapsedAccumulator = 0;
 export function updateRecordDisplay(record, deltaSeconds, controls) {
   if (!record) return;
 
-  // Aスター(バルジ中心)のスターダスト更新。非表示中も、残った粒が消えるまで更新が必要。
-  if (record.bulgeStar) record.bulgeStar.userData.update(deltaSeconds, record.camera);
   if (record.growth) updateGalaxyGrowth(record.growth, deltaSeconds);
 
   if (record.trumpetApi) {
     trumpetElapsedAccumulator += deltaSeconds;
     record.trumpetApi.update(trumpetElapsedAccumulator);
+    applyTrumpetExposureCompensation(record); // ★ 追加: 俯瞰時の絞りで暗くならないよう、露出を打ち消す
   }
 
   // 鏡三角錐(レコード)の自転速度: 現状は常に等倍。
@@ -1679,7 +1711,9 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
   } else {
     // ★ ihはgoldenRingのすぐ上(universe.js側のIH_ABOVE_RING_MARGIN+バウンス)にいるので、
     //   リング自身の高さそのものより少し上を撮影点にする(仮値。見ながら調整してください)。
-    record.cubeCamera.position.copy(goldenRing.position).add(_goldenRingCubeCameraOffset);
+    // carouselRootが縮小・移動していてもワールド座標で追従する(localのpositionではずれるため)
+    goldenRing.getWorldPosition(_goldenRingWorldPos);
+    record.cubeCamera.position.copy(_goldenRingWorldPos).add(_goldenRingCubeCameraOffset);
   }
   record.mirrorGroup.visible = false;
   const wasVisualVisible = record.mirrorVisualAnchor.visible;
