@@ -344,8 +344,8 @@ const STAGE_TRANSITION = {
     denomFade: 4.0,  // ⑵ 2πがフェードインする ※元の速度の1/4
   },
   toStage3: { moveDuration: 1.2, spinDuration: 4.8 }, // ⑴bar伸長+2π→分母中心+h→分子中心 → ⑵分母が回転してCarouselへ(順番に発生。回転は1/4速度に減速)
-  // 2026-09-26: iが飛び乗る前の静止(gapBeforeHop)が長いとのご指摘により2秒→1秒に半減。
-  toStage4: { hMove: 0.7, gapBeforeHop: 1, hop: 0.8, merge: 0.6 },  // ⑴hが先に歩いて着地 → (1秒静止) → ⑵iがジャンプして乗る → ⑶最終微調整
+  // iが飛び乗る前の静止は撤廃(hが着地したら即iがジャンプ)。
+  toStage4: { hMove: 0.7, hop: 0.8, merge: 0.6 },  // ⑴hが先に歩いて着地 → ⑵iがジャンプして乗る → ⑶最終微調整
 };
 
 // ── ①→②(2段階) ──────────────────────────────
@@ -640,7 +640,7 @@ function transitionToStage4({ assembly, frame, onComplete }) {
   const barTarget = stagePartWorld('stage4', 'bar', vertexWorld, frame);
   const toDenomPos = stagePartWorld('stage4', 'denom', vertexWorld, frame);
 
-  const { hMove, gapBeforeHop, hop, merge } = STAGE_TRANSITION.toStage4;
+  const { hMove, hop, merge } = STAGE_TRANSITION.toStage4;
 
   const tl = gsap.timeline({ onComplete });
 
@@ -652,7 +652,7 @@ function transitionToStage4({ assembly, frame, onComplete }) {
   // ★2026-08-16 修正: 以前は「hの到着間際にiの助走を重ねる」演出(動く馬に飛び乗る
   //   イメージ)だったが、ご要望により「hが完全に止まる→2秒間→iが動き出す」という
   //   明確に区切られた順番に変更。
-  const hopStartTime = hMove + gapBeforeHop;
+  const hopStartTime = hMove;
   const hopPeak = { t: 0 };
   const arcHeight = phase3SymbolWorldSize('h2').height * 0.5;
   tl.to(hopPeak, {
@@ -673,18 +673,6 @@ function transitionToStage4({ assembly, frame, onComplete }) {
   // Carousel・バーはstage3とほぼ同じ位置なので、わずかな最終微調整だけ
   tl.to(carouselSprite.position, { x: toDenomPos.x, y: toDenomPos.y, z: toDenomPos.z, duration: merge, ease: 'power2.out' }, landTime);
   tl.to(barSprite.position, { x: barTarget.x, y: barTarget.y, z: barTarget.z, duration: merge, ease: 'power2.out' }, landTime);
-}
-
-// ステージ間の「静止時間」(秒)。ご要望により、2π出現後に2秒設けていたが、
-// 2026-09-26: 動きの尺(toStage2)はそのままに、この「出現し終えた後の純粋な待機」だけを
-// 半分の1秒に短縮。
-const STAGE_TRANSITION_HOLD = {
-  afterStage2: 1, // 2πが出現した直後の静止
-};
-
-function holdThen(seconds, fn) {
-  if (!seconds) { fn(); return; }
-  gsap.delayedCall(seconds, fn);
 }
 
 // ── Phase3オーケストレーション本体 ──────────────────────
@@ -731,23 +719,21 @@ export function startPhase3({ assembly, camera, onStageChange, onComplete }) {
     onComplete: () => {
       p3.stage = 'stage2';
       if (onStageChange) onStageChange('stage2');
-      holdThen(STAGE_TRANSITION_HOLD.afterStage2, () => {
-        transitionToStage3({
-          assembly, frame,
-          onComplete: () => {
-            p3.stage = 'stage3';
-            if (onStageChange) onStageChange('stage3');
-            transitionToStage4({
-              assembly, frame,
-              onComplete: () => {
-                p3.stage = 'stage4';
-                p3.busy = false;
-                if (onStageChange) onStageChange('stage4');
-                if (onComplete) onComplete();
-              },
-            });
-          },
-        });
+      transitionToStage3({
+        assembly, frame,
+        onComplete: () => {
+          p3.stage = 'stage3';
+          if (onStageChange) onStageChange('stage3');
+          transitionToStage4({
+            assembly, frame,
+            onComplete: () => {
+              p3.stage = 'stage4';
+              p3.busy = false;
+              if (onStageChange) onStageChange('stage4');
+              if (onComplete) onComplete();
+            },
+          });
+        },
       });
     },
   });
