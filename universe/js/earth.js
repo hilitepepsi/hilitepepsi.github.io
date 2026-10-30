@@ -593,8 +593,8 @@ const BREAK_SPLASH_RATE     = 0.10;  // 1区切りごとに、条件を満たす
 // ここに好きな一文を2つ入れる。著作権のある文章(書籍からの引用など)を
 // 書き込む場合は引用の範囲・扱いに注意すること。
 const SWIM_QUOTES = [
-  "a placeholder line waiting to be replaced with words of your choosing",
-  "the sea keeps its own memory, folding every voice back into the tide",
+  "but I can still see his friendly, lovely, sociable face before me, at wide intervals!",
+  "this lad instantaneously translated every word to perfection except “vague”, ",
 ];
 const SWIM_FONT_FAMILY = "'Cormorant Garamond', 'Times New Roman', serif";
 // 各引用文の単語群を、赤道をまたいで互いに重ならないよう緯度をずらして
