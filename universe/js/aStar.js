@@ -1,29 +1,35 @@
-
 import * as THREE from 'three';
 
 export const BULGE_ORANGE = 0xff9a3c;
 
-function makeGlowTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grad.addColorStop(0.0, 'rgba(255,190,110,1)');
-  grad.addColorStop(0.25, 'rgba(255,140,50,0.55)');
-  grad.addColorStop(1.0, 'rgba(255,120,30,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 128, 128);
-  return new THREE.CanvasTexture(c);
-}
+const ORB_VERT = `
+  varying vec3 vNormal;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+// 中心ほど明るく、縁に向かって滑らかに溶ける(球体そのものが発光して見える)
+const ORB_FRAG = `
+  varying vec3 vNormal;
+  void main() {
+    float f = clamp(abs(vNormal.z), 0.0, 1.0);
+    float glow = pow(f, 1.6);
+    // BULGE_ORANGE (0xff9a3c) をそのまま使う。中心も白に寄せずオレンジのまま
+    vec3 col = vec3(1.0, 0.604, 0.235);
+    gl_FragColor = vec4(col, glow);
+  }
+`;
 
 const DUST_VERT = `
+  uniform float uZoom;
   attribute float aAlpha;
   attribute float aSize;
   varying float vAlpha;
   void main() {
     vAlpha = aAlpha;
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = aSize * (300.0 / -mv.z);
+    gl_PointSize = min(aSize * uZoom * (300.0 / -mv.z), 24.0); // uZoom: 俯瞰のズーム係数(1=等倍)。ズームで尾の粒が巨大なにじみにならないよう24pxで頭打ち
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -39,7 +45,7 @@ const DUST_FRAG = `
 `;
 
 /**
- * オレンジの暈 + 黒い芯 + スターダストの尾を持つ「Aスター」。
+ * 発光する球体 + スターダストの尾を持つ「Aスター」。
  * 毎フレーム group.userData.update(dt) を呼ぶこと(dt は秒)。
  *
  * opts:
@@ -62,21 +68,18 @@ export function createAStar(scene, opts = {}) {
 
   const group = new THREE.Group();
 
-  // ── 本体 ──
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: makeGlowTexture(),
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    transparent: true,
-  }));
-  halo.scale.setScalar(1.6);
-  group.add(halo);
-
-  const core = new THREE.Mesh(
-    new THREE.SphereGeometry(0.12, 16, 16),
-    new THREE.MeshBasicMaterial({ color: 0x000000 })
+  // ── 本体(発光する球体) ──
+  const orb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 32, 32),
+    new THREE.ShaderMaterial({
+      vertexShader: ORB_VERT,
+      fragmentShader: ORB_FRAG,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+    })
   );
-  group.add(core);
+  group.add(orb);
 
   // ── スターダスト(ワールド座標のプール) ──
   const pos = new Float32Array(maxParticles * 3);
@@ -92,6 +95,7 @@ export function createAStar(scene, opts = {}) {
   geo.setAttribute('aSize', new THREE.BufferAttribute(psize, 1));
 
   const dust = new THREE.Points(geo, new THREE.ShaderMaterial({
+    uniforms: { uZoom: { value: 1 } },
     vertexShader: DUST_VERT,
     fragmentShader: DUST_FRAG,
     transparent: true,
@@ -122,13 +126,23 @@ export function createAStar(scene, opts = {}) {
     baseSize[i] = size * s * (0.5 + Math.random() * 0.8);
   }
 
+  // group.visibleだけでなく、親(バルジなど)が隠れている場合も「見えていない」と扱う。
+  // (尾の粒はscene直下に置いてあるので、親が隠れても勝手には隠れない。以前はバルジが隠れる8°未満でも
+  //  尾が出続けて、carousel側に不要なAスターの光が残っていた)
+  const effectivelyVisible = () => {
+    for (let n = group; n; n = n.parent) if (!n.visible) return false;
+    return true;
+  };
+
   group.userData.update = (dt) => {
+    const shown = effectivelyVisible();
+    dust.visible = shown; // 隠れている間は、残っている粒も描かない
     group.getWorldPosition(cur);
     group.getWorldScale(wScale);
     const s = wScale.x;
 
     // 発生: 動いた距離に比例(+静止中の微量)
-    if (group.visible) {
+    if (shown) {
       let n = idleRate * dt;
       if (hasPrev) n += cur.distanceTo(prev) * density / Math.max(s, 1e-6) * 1.0;
       carry += n;
@@ -165,6 +179,9 @@ export function createAStar(scene, opts = {}) {
     geo.attributes.aAlpha.needsUpdate = true;
     geo.attributes.aSize.needsUpdate = true;
   };
+
+  // 俯瞰のズーム係数を尾(スターダスト)の粒の大きさへ反映する(球体は実寸のメッシュなので不要)。
+  group.userData.setZoom = (z) => { dust.material.uniforms.uZoom.value = z; };
 
   group.userData.dispose = () => {
     scene.remove(dust);
