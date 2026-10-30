@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STAR_INNER_RADIUS, STAR_SHELL_THICKNESS } from './config.js'; // カメラの外壁(config.js)と同じ値を共有する
 
 // ── 星空(球殻状に分布し、シェーダーで瞬く) ───────
 //
@@ -15,20 +16,15 @@ import * as THREE from 'three';
 // uProgress を 0 に戻す。position===aTargetになった星は今後 uProgress が
 // また動いても位置が変わらない(=固定される)ので、続けて「別の星の集団」を
 // 次の形(例: =)へ収束させる、という多段階の演出が同じ uProgress ひとつで実現できる。
-// ── 星本体は「芯」だけのシンプルな円(下のフラグメントシェーダー参照)。
-//   発光(光暈)はsceneSetup.js側の丸いBloomパイプラインに委ねる方針にしたため、
-//   以前ここにあった焼き込みテクスチャ用のグラデーション調整パラメータは廃止した。
-
-// ★ 変更: 以前はcanvasに焼き込んだ「芯+広い光暈」のグラデーションテクスチャを使い、
-//   Bloom専用パスから完全除外(excludeFromBloom)することで丸さを保っていた。
-//   しかし静的な焼き込みテクスチャでは、実際の明るさに反応して伸び縮みする
-//   UnrealBloomPassらしい発光感が出せず不満が残っていたため、方針を変更する。
-//   → 星本体(この点)は「芯」だけのシンプルな円にし、周囲の発光(光暈)は
-//   sceneSetup.js側に新設した専用の丸いBloomパイプライン(閾値抽出+十分な解像度の
-//   分離ガウシアン。UnrealBloomPassのような低解像度ミップを使わないため、
-//   どれだけ強くかけても輪郭が四角くならない)に完全に委ねる。
-//   この星はUnrealBloomPass本体(bloomComposer)からは今まで通り除外したまま、
-//   新しい丸いBloomパイプラインにだけ含める(sceneSetup.jsのincludeInRoundBloom参照)。
+//
+// ★ 変更(UnrealBloom撤廃): 星の発光は、ポストプロセスのBloomではなく
+//   「点スプライト自身に描くMoffat分布」で表現する(星の発光表現ラボの「2 Moffat(べき乗裾)」)。
+//     v = (1 + (r/a)²)^-β   …実際の光学系のPSFに近い、芯が鋭く裾が長い減衰
+//   ・Bloomの低解像度ミップに起因する「四角い光暈」が原理的に出ない(常に真円)。
+//   ・星の明るさ(brightness)がそのまま芯の強さになるので、瞬きに合わせて芯と裾が一緒に伸縮する。
+//   ・スプライトは「芯の直径 × uHalo」まで大きく取り、はみ出し分の裾はスプライト縁で滑らかに0へ窓掛けする。
+//   ※ main.js側の excludeFromBloom(starField.mesh) / includeInRoundBloom(starField.mesh) は不要になった
+//     (残すと二重に光るので削除すること)。
 
 export function createStars(scene, count = 3000) {
   const positions = new Float32Array(count * 3);
@@ -45,12 +41,12 @@ export function createStars(scene, count = 3000) {
   const active = new Float32Array(count);
   const formed = new Float32Array(count);
   const isPsi = new Float32Array(count);
-  const radius = 150;
+  const radius = STAR_INNER_RADIUS;
 
   for (let i = 0; i < count; i++) {
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.acos(2 * Math.random() - 1);
-    const r = radius + Math.random() * 350;
+    const r = radius + Math.random() * STAR_SHELL_THICKNESS;
 
     const x = r * Math.sin(phi) * Math.cos(theta);
     const y = r * Math.sin(phi) * Math.sin(theta);
@@ -92,6 +88,10 @@ export function createStars(scene, count = 3000) {
       uColor: { value: new THREE.Color(0x9ecbff) },
       uProgress: { value: 0 }, // 0=position(現在地)のまま、1=aTarget(収束先)に到着
       uPsiFade: { value: 0 },  // 0=星のψのまま、1=本物のpsi.pngへ完全にクロスフェード済み(星側は非表示)
+      // ── Moffat発光のパラメータ ──
+      uHalo: { value: 8 },        // スプライト直径 = 芯の直径 × この値(通常の星。大きいほど裾が遠くまで伸びる)
+      uHaloFormed: { value: 4 },  // 収束済み(ψ/=を作る)ドット用。小さめにして文字の輪郭を保つ
+      uMaxPoint: { value: 128 },  // gl_PointSizeの上限(px)。GPU/ブラウザの上限(64〜511程度)を超えないための保険
     },
     vertexShader: `
             attribute float phase;
@@ -102,9 +102,13 @@ export function createStars(scene, count = 3000) {
             uniform float uTime;
             uniform float uProgress;
             uniform float uPsiFade;
+            uniform float uHalo;
+            uniform float uHaloFormed;
+            uniform float uMaxPoint;
             varying float vTwinkle;
             varying float vFormed;
             varying float vHide;
+            varying float vCore;
             void main() {
                 vTwinkle = 0.5 + 0.5 * sin(uTime * 1.5 + phase * 6.2831);
                 // aActive=0の星(収束に無関係な星)は、uProgressが動いても
@@ -117,11 +121,17 @@ export function createStars(scene, count = 3000) {
                 vFormed = max(aFormed, travel);
                 vHide = aIsPsi * uPsiFade; // ψを構成する星だけ、本物のpsi.pngへの置き換え時にフェードアウト
                 vec4 mvPosition = modelViewMatrix * vec4(morphed, 1.0);
-                // サイズは元の値に戻した(発光の見た目はテクスチャ側の
-                // グラデーション調整で作る方針にしたため)。
+
+                // 芯の直径(px)。以前のgl_PointSizeと同じ計算(=星の見かけの大きさは変えない)。
                 float shrink = mix(0.9, 0.2, vFormed);
                 float rawSize = (1.2 + vTwinkle * 3.3) * shrink * (300.0 / -mvPosition.z);
-                gl_PointSize = max(rawSize, 3.0);
+                float core = max(rawSize, 3.0);
+
+                // スプライトは芯より大きく取り、Moffatの裾を描く余白にする。
+                float sprite = min(core * mix(uHalo, uHaloFormed, vFormed), uMaxPoint);
+                // スプライト半幅に対する芯半径の比(=Moffatの広がりa)。上限で切られた場合も比率を保つ。
+                vCore = min(core / sprite, 0.5);
+                gl_PointSize = sprite;
                 gl_Position = projectionMatrix * mvPosition;
             }
         `,
@@ -130,26 +140,25 @@ export function createStars(scene, count = 3000) {
             varying float vTwinkle;
             varying float vFormed;
             varying float vHide;
+            varying float vCore;
             void main() {
-                // ★ 変更: 以前はここでテクスチャ(uStarTex)をサンプリングしていたが、
-                // 光暈をsceneSetup.js側の丸いBloomパイプラインに任せる方針にしたため、
-                // ここでは芯だけのシンプルな円マスクを自前で計算する。
-                float d = distance(gl_PointCoord, vec2(0.5));
-                float mask = 1.0 - smoothstep(0.0, 0.5, d);
-                // 収束済みほど輪郭を締める: 距離マスクに対してpowをかけると
-                // 裾野(にじみ部分)が急峻になり、シャープな小さいドットに近づく。
-                float sharpness = mix(1.0, 3.5, vFormed);
-                mask = pow(mask, sharpness);
+                // r: スプライト中心からの距離(0=中心, 1=スプライトの内接円の縁)
+                float r = length(gl_PointCoord - vec2(0.5)) * 2.0;
+                if (r >= 1.0) discard;
+
+                // ★ Moffat: (1 + (r/a)^2)^-beta。aは芯の半径(スプライト半幅比)、betaが小さいほど裾が長い。
+                //   通常の星は beta=1.25(長い裾)。収束済みのドットはbetaを上げて裾を締め、文字として読みやすくする。
+                float rr = r / vCore;
+                float beta = mix(1.25, 2.0, vFormed);
+                float profile = pow(1.0 + rr * rr, -beta);
+                // スプライトの縁で裾がぷつっと切れないよう、外側で滑らかに0へ落とす窓。
+                profile *= 1.0 - smoothstep(0.3, 1.0, r);
+
                 // 収束済みほど瞬きを抑えて明るさを安定させる(文字として読みやすくする)。
-                // ここでのbrightnessは「色の強さ」であり、blend時の重み(alpha=mask)とは
-                // 別物として扱う。alphaをそのままmaskにしておくことで、なめらかな
-                // 円の形状(裾野の柔らかさ)を壊さずに保ちつつ、色をuColor*brightnessで
-                // 1.0超まで押し上げて(1chあたり255でクリップされる)、芯が白飛びするような
-                // 「発光の強さ」を表現できる。この明るさが丸いBloomパイプラインの
-                // 閾値抽出(luminosityThreshold)にそのまま効いてくる。
+                // brightnessは「芯の強さ」。profile(=alpha)は中心1で、裾に向かって減衰する。
                 float brightness = mix(1.1 + vTwinkle * 0.8, 4.2, vFormed);
-                float alpha = mask * (1.0 - vHide);
-                if (alpha <= 0.001) discard;
+                float alpha = profile * (1.0 - vHide);
+                if (alpha <= 0.0002) discard;
                 gl_FragColor = vec4(uColor * brightness, alpha);
             }
         `,
@@ -159,6 +168,9 @@ export function createStars(scene, count = 3000) {
   });
 
   const stars = new THREE.Points(geometry, material);
+  // 点スプライトは画面上のpxで大きさが決まり、bounding sphereに反映されない。
+  // 画面端でスプライトごと消えないよう、カリングは切る。
+  stars.frustumCulled = false;
   scene.add(stars);
 
   // ── 未割当プール: まだどの形にも使われていない星のindexリスト ──
@@ -277,6 +289,7 @@ export function createStars(scene, count = 3000) {
 
   return {
     mesh: stars,
+    material, // uHalo / uHaloFormed などを実行時に調整できるよう公開(例: starField.material.uniforms.uHalo.value = 10)
     count,
     update(time) {
       material.uniforms.uTime.value = time;
