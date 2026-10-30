@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
-import { AXIS_LENGTH, AXIS_COLOR, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET, UNIVERSE_CAMERA_DIR, UNIVERSE_CAMERA_DISTANCE } from './config.js';
+import { AXIS_LENGTH, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET, UNIVERSE_CAMERA_DIR, UNIVERSE_CAMERA_DISTANCE } from './config.js';
 import { makeTextSprite } from './axisLabels.js';
+import { makeSpikeAxisMesh, AXIS_GLOW_COLOR } from './axes.js';
 
 // ── 宇宙ページ用の疑似正射影(narrow FOV) ─────────────────────
 //   ズーム量はconfig.js側のUNIVERSE_CAMERA_DISTANCEで調整する(小さいほど拡大)。
@@ -28,6 +29,23 @@ const UNIVERSE_PSEUDO_ORTHO_FOV_DEG = 0.21; // 仮値。見た目を見ながら
 const UNIVERSE_PERSPECTIVE_REFERENCE_FOV_DEG = 50; // 距離を決めるための基準fov(位置決め専用。変更しない)
 const UNIVERSE_PERSPECTIVE_FOV_DEG = 90; // 実際に使う広角fov(仮値。大きいほど広角・迫力が出る。見た目を見ながら調整してください)
 
+// ★ 2026-10-11 追加(ご指示反映): 「左右ドラッグでカメラが銀河内回転から離脱してズームアウトするとき、
+//   一気にズームアウトしてしまう違和感」への対応。
+//   原因: 距離とfovをmixで直線的に補間しているため、画面に映る範囲(対象位置での視野の幅
+//   = 距離×tan(fov/2))が、fovが0.21°→90°と桁違いに変わる影響で、ドラッグのごく最初の
+//   数%で急激に広がっていた(mix=0.01で約5倍、0.1で約40倍、中盤で約114倍まで広がってから戻る)。
+//   対応: ドラッグ量mixをそのまま使わず、「入りは緩く、だんだん加速し、最後は滑らかに着地」する
+//   イージングを通してから距離・fovに反映する(経路そのものは同じで、進み方だけを変えた)。
+//   視野の広がりは mix=0.05で1.0倍・0.1で1.1倍・0.2で3倍・0.3で10倍・0.5で58倍と、
+//   最初は小さく、後ろほど加速する。
+//   UNIVERSE_ZOOM_EASE_POWERが大きいほど入りがさらに緩く(後ろに寄って)なる。1だと
+//   smoothstepだけ(入りがやや速い)。端点(mix=0と1)の見た目は変わらない。
+const UNIVERSE_ZOOM_EASE_POWER = 2; // 仮値。見ながら調整してください(1〜3程度)
+function easeProjectionMix(m) {
+  const u = Math.pow(m, UNIVERSE_ZOOM_EASE_POWER);
+  return u * u * (3 - 2 * u); // smoothstep
+}
+
 export function createUniverseProjectionMixer(camera) {
   const orthoDistance = UNIVERSE_CAMERA_DISTANCE; // mix=0(既定の疑似正射影)での距離
   const orthoHalfFovRad = THREE.MathUtils.degToRad(UNIVERSE_PSEUDO_ORTHO_FOV_DEG / 2);
@@ -37,10 +55,12 @@ export function createUniverseProjectionMixer(camera) {
   const perspectiveDistance = orthoDistance * (Math.tan(orthoHalfFovRad) / Math.tan(referenceHalfFovRad));
 
   // mix: 0(既定の疑似正射影・UNIVERSE_CAMERA_POSそのもの)〜1(同じ角度・同じ距離のまま、fovだけ広角の透視図まで進む)。
+  // 戻り値はクランプしただけのmix(イージング前)。呼び出し側(main.js)が進行度として使える。
   return function setUniverseProjectionMix(mix) {
     const m = THREE.MathUtils.clamp(mix, 0, 1);
-    const distance = THREE.MathUtils.lerp(orthoDistance, perspectiveDistance, m);
-    camera.fov = THREE.MathUtils.lerp(UNIVERSE_PSEUDO_ORTHO_FOV_DEG, UNIVERSE_PERSPECTIVE_FOV_DEG, m);
+    const eased = easeProjectionMix(m);
+    const distance = THREE.MathUtils.lerp(orthoDistance, perspectiveDistance, eased);
+    camera.fov = THREE.MathUtils.lerp(UNIVERSE_PSEUDO_ORTHO_FOV_DEG, UNIVERSE_PERSPECTIVE_FOV_DEG, eased);
     camera.position.copy(UNIVERSE_CAMERA_TARGET).addScaledVector(UNIVERSE_CAMERA_DIR, distance);
     camera.updateProjectionMatrix();
     camera.lookAt(UNIVERSE_CAMERA_TARGET);
@@ -228,10 +248,12 @@ const APEX_OUTWARD_DIR = new THREE.Vector3(0, 1, 0);
 export const RECORD_ANCHOR = ORIGIN.clone().addScaledVector(APEX_OUTWARD_DIR, EQUATION_HEIGHT_ABOVE_APEX);
 
 // ── 頂点→各終端の3本の軸線を作る(以前のcreateRotatingAxes()と同じ、追加の辺はなし) ──
+// ★ ホームの軸(axes.js)と同じ表現(鋭い断面・頂点側が明るく先端へ先細り・濃い青)に差し替えた。
+//   以前の1px LineBasicMaterial ではなく、画面上で一定ピクセル幅の帯。星(原点・終端)は付けない。
+//   宇宙ページのカメラは疑似正射影で非常に遠い(UNIVERSE_CAMERA_DISTANCE)ので、太さの基準距離にそれを渡す。
+//   material.opacity は従来どおり触れる(enterUniverseのフェードインがそのまま効く)。
 function makeAxisLine(tip) {
-  const geo = new THREE.BufferGeometry().setFromPoints([ORIGIN, tip]);
-  const mat = new THREE.LineBasicMaterial({ color: AXIS_COLOR, transparent: true, opacity: 0 });
-  return new THREE.Line(geo, mat);
+  return makeSpikeAxisMesh(ORIGIN, tip, { refDist: UNIVERSE_CAMERA_DISTANCE });
 }
 
 // ── 金のリング(tripodクリックで、ihと一緒にフェードイン) ─────────────
@@ -326,7 +348,11 @@ const ROOF_PARTICLE_SIZE = AXIS_LENGTH * 0.16
 // ★ 追加: 画面上の見かけサイズの上限(px)。近くで見た時にまぶしくなりすぎるのを防ぐ
 //   (上のROOF_VERTEX_SHADER内のクランプで使う)。遠くから見た時(=roughly
 //   UNIVERSE_CAMERA_DISTANCEの距離)はこの上限より小さいはずなので、見た目に影響しない。
-const ROOF_MAX_PIXEL_SIZE = 48; // 仮値。galaxy.js側のGALAXY_MAX_PIXEL_SIZE・record.js側のBULGE_MAX_PIXEL_SIZEと揃えた
+// ★ 修正(ご指摘反映): 「carousel屋根の粒子がまだ巨大すぎる」への対応。前回はbulge
+//   (目立たせたい中心核)のBULGE_MAX_PIXEL_SIZE(=48)をそのまま流用していたが、
+//   屋根の粒子は本来「tripodの脚が残す控えめな軌跡」の演出なので、bulgeと同じ
+//   目立ち方は過剰だった。もっと小さい値に下げる。
+const ROOF_MAX_PIXEL_SIZE = 14; // 仮値。前回の48から大きく下げた。まだ大きければさらに下げてください
 export const ROOF_FADE_DURATION = 1.5;           // (現在は未使用。以前のフェードイン用の名残)
 const ROOF_MAX_ALPHA = 0.9;                      // フル不透明時の上限(0.75→0.9。仮値。さらに目立たせたければ1.0まで上げてよい)
 // ★ 変更(ご指示反映): 「carouselの屋根のパーティクルを軸と同じ色と質感にしてほしい」
@@ -336,7 +362,7 @@ const ROOF_MAX_ALPHA = 0.9;                      // フル不透明時の上限(
 // ★ 変更(ご指示反映): 「carouselの屋根のパーティクルを軸と同じ色と質感にしてほしい」
 //   への対応。以前は生成時の累積回転角を1/6周(60°)ごとに区切って黄緑↔オレンジを
 //   交互に切り替えていたが、軸線(AXIS_COLOR、config.js)と同じ単色に統一する。
-const ROOF_COLOR = new THREE.Color(AXIS_COLOR);
+const ROOF_COLOR = new THREE.Color(AXIS_GLOW_COLOR); // 軸線(axes.jsの濃い青)と同じ色に揃える
 // ★ 追加: 「軸から発生し、その位置で滞留し、1/3周期で透明度を上げて消滅させる」の反映。
 //   1粒子の寿命(=tripodがちょうど1周してくる時間。1/TRIPOD_ANGULAR_SPEEDに比例)のうち、
 //   最初の2/3はフル不透明のまま留まり(滞留)、残りの1/3で透明度を上げていき(フェードアウト)
@@ -533,10 +559,14 @@ function updateIhOrbitPosition(universe) {
   const z = IH_ORBIT_RADIUS * Math.sin(angle);
   const y = RING_DOWN_Y + IH_ABOVE_RING_MARGIN + IH_BOB_AMPLITUDE * Math.sin(universe.ihElapsed * IH_BOB_SPEED);
   universe.ihSprite.position.set(x, y, z);
+  // ★ carouselRootが縮小・移動していてもlookAtの向きがずれないよう、自身のmatrixWorldを
+  //   最新にし、ターゲットもワールド座標へ直してから渡す(scale=1・原点なら従来と同じ)。
+  universe.ihSprite.updateWorldMatrix(true, false);
 
   // 固定方向: カメラを追わず、「円の外側」(=中心軸から見た放射方向。惑星でいう遠心力の向き)へ
   // 常に固定する。放射方向は角度(x, z)だけで決まり、高さ(y)には依存しない。
-  _ihOutwardTarget.set(x * 2, y, z * 2); // 現在位置よりさらに外側の点をlookAtのターゲットにする
+  _ihOutwardTarget.set(x * 2, y, z * 2); // 現在位置よりさらに外側の点(root内ローカル座標)
+  universe.carouselRoot.localToWorld(_ihOutwardTarget); // lookAtはワールド座標を要求する
   universe.ihSprite.up.set(0, 1, 0);
   universe.ihSprite.lookAt(_ihOutwardTarget);
 }
@@ -615,6 +645,8 @@ const _hoverProjected = new THREE.Vector3();
 // main.jsのpointermoveハンドラから毎回呼ぶ想定。宇宙ページが非アクティブ、または
 // 表示中の方程式スプライトがまだ無い間は何もしない。
 export function updateEquationHoverByPointer(universe, camera, clientX, clientY) {
+  // ★ 2026-10-27 撤廃(ご指示反映): 方程式の色変化の遊び効果はやめた。呼ぶ側が残っていても色は変えない。
+  if (true) return;
   if (!universe || !universe.isActive) return;
   const sprite = universe.sprites[universe.equationIndex];
   if (!sprite || !sprite.visible) return;
@@ -641,25 +673,37 @@ export function createUniverse(scene) {
   //   ラッパー。axesGroup自体はこれまで通りliftTripod・自転(rotateOnWorldAxis)で
   //   ローカルに動く/回るだけにしておき、スワップ演出はこのtripodAnchor(の.position)
   //   だけを動かすことで、既存のlift・回転ロジックと競合しないようにしてある。
+  // ★ 2026-10-25 追加(ご指示反映): 「回転木馬(carousel)を縮小して、銀河とのスケール差で
+  //   量子世界の小ささを見せたい」への対応。以前はtripod・リング・粒子・ihをそれぞれ個別に
+  //   縮めようとして、他ファイル(tripodRingSwap.js等)が毎フレーム書き込む位置と競合して
+  //   厄介だった。そこで carousel 一式(tripodAnchor/goldenRing/当たり判定/屋根粒子/ih)を
+  //   このcarouselRootの子にまとめ、縮小は**このグループのscaleだけ**で行う。
+  //   他ファイルが書き込むのは各オブジェクトの「ローカル座標」なので競合しない
+  //   (scale=1のときは従来とまったく同じ見た目)。
+  const carouselRoot = new THREE.Group();
+  scene.add(carouselRoot);
+
   const tripodAnchor = new THREE.Group();
-  scene.add(tripodAnchor);
+  carouselRoot.add(tripodAnchor);
 
   const { group: axesGroup, lines: axisLines, labels: axisLabels } = createRotatingAxes();
   tripodAnchor.add(axesGroup);
 
   const goldenRing = makeGoldenRing();
-  scene.add(goldenRing);
+  carouselRoot.add(goldenRing);
 
   const tripodHitMesh = makeTripodHitMesh();
-  scene.add(tripodHitMesh);
+  carouselRoot.add(tripodHitMesh);
 
   // tripodが回転しながら残していく粒子の軌跡。ワールド空間に固定するので、
   // axesGroupの子ではなくsceneに直接追加する。
+  // ★ carouselRootの子にしたので、粒子の座標は「carouselRootのローカル座標」で書き込む
+  //   (=縮小に既存の軌跡も一緒についてくる。updateUniverse内のspawn参照)。
   const roofParticles = makeRoofParticles();
-  scene.add(roofParticles);
+  carouselRoot.add(roofParticles);
 
   const ihSprite = makeIhObject();
-  scene.add(ihSprite);
+  carouselRoot.add(ihSprite);
   new SVGLoader().load(
     IH_SVG_URL,
     (data) => {
@@ -729,6 +773,8 @@ export function createUniverse(scene) {
   );
 
   return {
+    carouselRoot,       // ← carousel一式の親。縮小はここのscaleだけで行う(setCarouselScale)
+    carouselScale: 1,   // ← 現在の縮小倍率(1=従来サイズ)
     axesGroup,
     tripodAnchor,       // ← tripod/ring対応スワップ演出用。axesGroup全体の親(通常は原点のまま)
     axisLines,
@@ -876,8 +922,37 @@ export function setTripodAngularSpeed(value) {
   TRIPOD_ANGULAR_SPEED = value;
 }
 
+// ── carouselの縮小(銀河とのスケール差で、量子世界の小ささを見せる演出) ──────────
+// ★ 2026-10-25 追加。縮小の基準点pivotは「銀河の中心」。carouselの回転軸(x=z=0)から
+//   ずれないよう、既定は(0, TRIPOD_GROUND_Y, 0)。呼び出し側で銀河中心の高さに合わせて渡すとよい。
+// 最終的な倍率の目安: 銀河直径の約1/160(画面で銀河800pxなら木馬が約5px)になる0.1。
+//   小さすぎて消えるなら0.15、まだ大きいなら0.07など、見ながら調整してください。
+export const CAROUSEL_MIN_SCALE = 0.1;
+const _defaultCarouselPivot = new THREE.Vector3(0, TRIPOD_GROUND_Y, 0);
+
+export function setCarouselScale(universe, k, pivot = _defaultCarouselPivot) {
+  const root = universe.carouselRoot;
+  if (!root) return;
+  const kk = Math.max(k, 1e-4);
+  root.scale.setScalar(kk);
+  // world = pivot + kk * (local - pivot) となるよう、root.positionでpivotを固定する
+  root.position.copy(pivot).multiplyScalar(1 - kk);
+  universe.carouselScale = kk;
+  // 屋根粒子のサイズはシェーダーが(modelMatrixのscaleを見ず)uSize/距離で決めているため、
+  // 縮小倍率ぶんだけuSizeも一緒に縮める。
+  universe.roofParticles.material.uniforms.uSize.value = ROOF_PARTICLE_SIZE * kk;
+}
+
+// 進行度t(0〜1。例: スクロールの引き量)から倍率を決める。**対数(指数)補間**:
+// k = minScale^t。ズームアウト中の「縮む速さの体感」が一定になる(線形だと序盤だけ急に縮む)。
+export function setCarouselScaleByProgress(universe, t, { minScale = CAROUSEL_MIN_SCALE, pivot } = {}) {
+  const tt = THREE.MathUtils.clamp(t, 0, 1);
+  setCarouselScale(universe, Math.pow(minScale, tt), pivot);
+}
+
 const _roofWorldOrigin = new THREE.Vector3();
 const _roofWorldTip = new THREE.Vector3();
+const _roofRootInverse = new THREE.Matrix4(); // carouselRootのワールド→ローカル変換(毎フレーム1回だけ計算)
 const ROOF_LEG_TIPS = [AXIS_TIPS.X, AXIS_TIPS.Y, AXIS_TIPS.Z];
 
 export function updateUniverse(universe, deltaSeconds, camera) {
@@ -888,19 +963,23 @@ export function updateUniverse(universe, deltaSeconds, camera) {
   if (universe.roofPulseActive) {
     // rotateOnWorldAxisの直後、localToWorldで最新のワールド座標を取るためには
     // matrixWorldを明示的に更新しておく必要がある(render()まで待つと1フレーム遅れるため)。
-    universe.axesGroup.updateMatrixWorld(true);
+    // ★ carouselRoot配下なので、rootから更新する(縮小中でも最新のワールド座標が取れる)。
+    universe.carouselRoot.updateMatrixWorld(true);
+    _roofRootInverse.copy(universe.carouselRoot.matrixWorld).invert();
 
     const rotationStep = Math.abs(rotationDelta);
 
     // 3本の脚それぞれについて、「前回の生成からどれだけ回転したか」を個別に積算し、
     // ROOF_SPAWN_ANGLE_STEPを超えるたびにワールド座標を取って1粒子生成する
     // (1フレームでの回転量がステップ幅を超えるほど速い場合に備え、whileで複数回に分けて処理する)。
-    universe.axesGroup.localToWorld(_roofWorldOrigin.copy(ORIGIN));
+    // 粒子はcarouselRootの子なので、ワールド座標を取った後にroot内ローカルへ戻して書き込む
+    // (縮小倍率が1なら恒等変換で、従来と同じ値になる)。
+    universe.axesGroup.localToWorld(_roofWorldOrigin.copy(ORIGIN)).applyMatrix4(_roofRootInverse);
     ROOF_LEG_TIPS.forEach((tip, legIndex) => {
       universe.roofLegSpawnAngle[legIndex] += rotationStep;
       while (universe.roofLegSpawnAngle[legIndex] >= ROOF_SPAWN_ANGLE_STEP) {
         universe.roofLegSpawnAngle[legIndex] -= ROOF_SPAWN_ANGLE_STEP;
-        universe.axesGroup.localToWorld(_roofWorldTip.copy(tip));
+        universe.axesGroup.localToWorld(_roofWorldTip.copy(tip)).applyMatrix4(_roofRootInverse);
         spawnRoofParticle(universe, _roofWorldOrigin, _roofWorldTip);
       }
     });
