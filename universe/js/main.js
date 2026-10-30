@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+console.log('[main.js] build: 2026-10-27 shrink-phase + A-star'); // 新しいmain.jsが読み込まれているかの確認用
 import {
   ARCHER_POS, AXIS_X_FAR, TUNE,
   AXIS_WORLD_DIR, AXIS_LENGTH, AXIS_STATION,
-  HOME_CAMERA_POS, HOME_CAMERA_TARGET,
+  HOME_CAMERA_POS, HOME_CAMERA_TARGET, UNIVERSE_CAMERA_DISTANCE,
 } from './config.js';
 import { createSceneSetup } from './sceneSetup.js';
 import { attachScrollDrivenRain } from './waveSurfacePass.js';
@@ -21,23 +22,24 @@ import { createEarth } from './earth.js';
 import { createHotspots } from './hotspots.js';
 import { createDialogue } from './dialogue.js';
 import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
-import { reapplySavingWork } from './galaxyGrowth.js';
+import { isSavingWorkActive } from './galaxyGrowth.js';
 import { createIntroSequence } from './introSequence.js';
-import { getAxisStationView, flyToAxisStation, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET } from './config.js';
+import { getAxisStationView, flyToAxisStation, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET, CAMERA_HARD_LIMIT, CAMERA_GRAVITY_START, CAMERA_GRAVITY_MAX_SPEED } from './config.js';
 import { createAxisStationOverlay } from './axisStationOverlay.js';
 import { createAxisConstellationOverlay } from './axisConstellationOverlay.js';
 import { AXIS_CONTENT } from './data/axisContent.js';
 import { createFinale, runFinale, handleIconClick } from './finale.js';
 import { createEquationAssembly, startPhase1, zoomToEquation, startPhase3 } from './equationAssembly.js';
-import { playOriginBurst } from './originBurst.js';
-import { createUniverse, enterUniverse, toggleUniverseEquation, updateUniverse, updateEquationHoverByPointer, revealTripodRing, liftTripod, startTripodRoofPulse, createUniverseProjectionMixer, unlockIh, setTripodAngularSpeed } from './universe.js';
+import { playOriginBurst, takeBurstAxisRedraw } from './originBurst.js';
+import { createUniverse, enterUniverse, toggleUniverseEquation, updateUniverse, updateEquationHoverByPointer, revealTripodRing, liftTripod, startTripodRoofPulse, createUniverseProjectionMixer, unlockIh, setTripodAngularSpeed, setCarouselScale } from './universe.js';
 import { createSolarSystem, updateSolarSystem, ORBIT_CENTER } from './solarSystem.js';
 import { createGalaxy, updateGalaxy, revealGalaxy, setGalaxyArmEmphasis, setGalaxyDifferentialRotation, ANGULAR_SPEED as GALAXY_ANGULAR_SPEED, ROTATION_DIRECTION as GALAXY_ROTATION_DIRECTION } from './galaxy.js';
 import { createTripodRingSwap, updateTripodRingSwap, finishTripodRingSwap } from './tripodRingSwap.js';
 import { createTiltShift } from './tiltShift.js';
+import { createAStar } from './aStar.js';
 import {
   createRecordDisplay, startRecordDisplay, tryRecordClick, updateRecordDisplay,
-  applyScroll, SCROLL_MAX, bindStarburst,
+  applyScroll, SCROLL_MAX, bindClickStar,
 } from './record.js';
 
 // YZパネルクリック時、メインカメラをビリヤード専用ページと同じ構図にする。
@@ -99,7 +101,7 @@ function flyCameraLinear(camera, controls, targetPos, targetLookAt, duration, on
 }
 
 // ── シーン一式のセットアップ ─────────────────────
-const { scene, camera, renderer, controls, composer, lookTarget, excludeFromBloom, includeInRoundBloom, render, setProjectionMix, wavePass } = createSceneSetup();
+const { scene, camera, renderer, controls, composer, lookTarget, excludeFromBloom, render, setProjectionMix, wavePass } = createSceneSetup();
 // 波面(雨紋+屈折)をスクロール操作に連動させる。
 // ※ この対応付け(一定速度で丁寧に操作するほど水面が落ち着く)は現時点の案であり、
 //   「スクロールで雨が降り出し静止で止む」等に変える場合はattachScrollDrivenRainの
@@ -120,38 +122,42 @@ if (controls) controls.mouseButtons.RIGHT = null;
 const setUniverseProjectionMix = createUniverseProjectionMixer(camera);
 
 const starField = createStars(scene, 3000);
-// ★ 変更: 以前はstars.js側で焼き込みテクスチャに光暈まで含めて作り、Bloomから完全除外する
-//   ことで「常に丸い」ことだけを担保していたが、実際の明るさに反応しない静的な発光では
-//   物足りないとのご指摘を受け、方針を変更した。
-//   → 本物のUnrealBloomPass(bloomComposer)からは引き続き除外する(小さい点だと
-//   低解像度ミップのせいで必ず光暈が四角くなるため)一方、新設した「丸いBloom」
-//   パイプライン(sceneSetup.js。閾値抽出+十分な解像度の分離ガウシアン)には含める。
-//   これで、実際の明るさ・強度パラメータに動的に反応しつつ、常に丸いままの発光になる。
+// ★ 2026-10-28 変更: 星の発光は stars.js のシェーダー(点スプライト自身に描くMoffat分布)で表現するようにした。
+//   そのため星はどちらのBloomにも入れない:
+//   ・UnrealBloomPass(bloomComposer): 小さい点だと低解像度ミップのせいで光暈が四角くなるので除外(従来どおり)。
+//   ・「丸いBloom」(includeInRoundBloom): Moffatと二重に光ってしまうので、登録をやめた。
 excludeFromBloom(starField.mesh);
-includeInRoundBloom(starField.mesh);
 
 const clock = new THREE.Clock();
 
 const hotspotMeshes = createHotspots(scene);
-// ★ 追加(ご質問反映): starburst(Phoebeの星)は、他の通常hotspotと違って既に
-//   canvasに焼き込んだ十字スパイクのスプライト(AdditiveBlending)を重ねてあり、
-//   それ単体で十分に「眩しい星」に見える作りになっている。この星の核メッシュに
-//   Bloomをかけると、核自体の小さな球がUnrealBloomPassの低解像度ミップのせいで
-//   四角い光暈を作ってしまう(hotspots.js側の修正=spikeを縁に接しないよう縮める+
-//   ミップマップ無効化、と合わせて、ここではBloom自体を完全に切ることで対応する)。
-//   核・スプライトどちらもm(核メッシュ)の子として一体なので、excludeFromBloom(m)一発で
-//   両方ともBloom専用パスから除外される→発光は完全にテクスチャだけに委ねられる。
-hotspotMeshes.filter((m) => m.userData.isStarburst).forEach((m) => excludeFromBloom(m));
+// ★ 2026-10-29 変更: hotspotの発光は、すべてhotspots.js側のシェーダーで自前に描く
+//   (通常のhotspot=stars.jsと同じMoffat点スプライト / starburst=「光芒+先端の星」と同じ作りの板)。
+//   そのため全てのhotspot(セリフの星)をBloom対象から外す。子(発光の板・点・判定球)も
+//   excludeFromBloom(m)一発でまとめて除外される。
+hotspotMeshes.forEach((m) => excludeFromBloom(m));
 
-// ★ 2026-09-29 追加(ご指示反映): 銀河俯瞰(overviewActive)中だけ、starburstの星を
-//   「銀河の中心(ORBIT_CENTER)の少し上」へ配置して表示する。
-//   ・STARBURST_OVERVIEW_OFFSET は銀河中心からの相対オフセット(仮値 (0,30,0))。
-//     ワールド絶対座標(0,30,0)にしたい場合は、animate内の .copy(ORBIT_CENTER).add(...) を
-//     .copy(STARBURST_OVERVIEW_OFFSET) に変えること。
-//   ・STARBURST_OVERVIEW_SCALE は俯瞰スケール(銀河が大きいため見えにくければ上げる)。
+// ★ 銀河俯瞰(overviewActive)中だけ、starburstの星を縮小carouselの代わりに表示する(下の2026-10-27コメント参照)。
 const starburstMeshes = hotspotMeshes.filter((m) => m.userData.isStarburst);
-const STARBURST_OVERVIEW_OFFSET = new THREE.Vector3(0, 20, 0);
-const STARBURST_OVERVIEW_SCALE = 0.5; // 通常の1/2サイズ(仮値。見ながら調整)
+// ★ 2026-10-27 仕様変更(ご指示反映): starburstは「carouselを拡大したときのつなぎ」専用になった。
+//   ・以前の「銀河中心の少し上(STARBURST_OVERVIEW_OFFSET)に置く」仕様は削除。縮小したcarouselと
+//     同じ位置(ORBIT_CENTER)に置き、carouselの代わりに見せる。
+//   ・クリックして銀河を育てる役目はAスター(record.js bindClickStar)へ移したので、クリック判定は持たない。
+//   ・ズームが進むほどstarburstは STARBURST_SCALE_FAR → STARBURST_SCALE_AT_SWAP へ膨らみ、
+//     すり替え閾値(CAROUSEL_SWAP_ZOOM_SHOW)に達した瞬間にcarouselへ置き換わる(=starburstが拡大してcarouselになる)。
+// starburst/Aスターのメッシュは、見える芯の部分が外形(バウンディングボックス)より小さいことが多い。
+//   carouselとの見かけの大きさの差を埋める補正係数。コンソールで window.starburstRatio = 1.5 のように
+//   入れると、その場で反映される(見ながら決めて、決まった値をここへ書き戻してください)。
+// starburstは、ズームが CAROUSEL_SWAP_ZOOM_HIDE に達するまでに、実寸の1倍から STARBURST_SWAP_SCALE 倍へ
+//   (対数補間で)膨らむ。それ以降、切り替えまでは一定。切り替えの瞬間に見かけがcarouselと揃うよう、
+//   見ながらこの倍率を決める(コンソールで window.starburstRatio = 6 のように入れると、その場で反映)。
+//   starburstの見える芯は外形(バウンディングボックス)より小さいため、1倍だとcarouselより小さく見える。
+const STARBURST_SWAP_SCALE = 4.0;    // 仮値
+const A_STAR_VISUAL_RATIO = 1.0;     // 仮値
+const CAROUSEL_SIDE_SOLAR = 'planets'; // carousel側(8°未満)で見せる太陽系の部分: 'planets'(惑星だけ。既定) | 'orbit'(軌道線だけ)
+const STAR_MIN_PIXELS = 3; // 仮値。Aスター/starburstの最小の見かけの大きさ(px)。実寸(=carouselと同じ)がこれより小さく
+//   なる遠景では、銀河の星(1〜数pxの点)と同じく「見つけられる点」として最低これだけは見せる。ズームして実寸が
+//   これを超えたら、実寸(=carouselの大きさ)どおりになる。
 
 const finale = createFinale(scene);
 let finaleActive = false; // フィナーレ開始後はcameraBusy/controlsとは別に、全インタラクションを止める
@@ -173,6 +179,8 @@ const { state: bananaState, triggerShatter } = createBanana(scene);
 
 const archer = createSagittarius(scene, ARCHER_POS);
 archer.visible = false;
+// ★ 2026-10-28 追加: 射手座の発光はsagittarius.js側(色ずれハロー)で描くので、Bloom対象から外す。
+excludeFromBloom(archer);
 
 // オープニング演出でのみ浮かび上がる射手座アートワーク(3D空間に固定されたSprite)。
 // ARCHER_POSからのオフセットで配置。ズレを直したい場合はこのVector3を調整する。
@@ -190,8 +198,14 @@ const equationAssembly = createEquationAssembly(scene, camera);
 // 見た目を見ながらこの値だけ調整すればOK。
 const EQUATION_BLOOM_INTENSITY = 0.8;
 Object.values(equationAssembly.sprites).forEach((sprite) => excludeFromBloom(sprite, EQUATION_BLOOM_INTENSITY));
+// ★ 2026-10-28 追加: 軸(createAxes)もBloom対象から外す。axes.jsの中身に依存しないよう、
+//   createAxes()がsceneへ追加した直下の子を差分で拾って除外する。
+const _childrenBeforeAxes = new Set(scene.children);
 const axes = createAxes(scene);
+scene.children.filter((c) => !_childrenBeforeAxes.has(c)).forEach((c) => excludeFromBloom(c));
 const universe = createUniverse(scene); // ← Phase3以降、画面クリックで遷移する「宇宙ページ」(星なし・回転する三軸+方程式画像)
+// ★ 2026-10-28 追加: 宇宙ページのtripod軸(universe.axesGroup)もBloom対象から外す。
+if (universe.axesGroup) excludeFromBloom(universe.axesGroup);
 // ★ 2026-09-17 追加(ご指摘反映): 「銀河俯瞰時、レコード(=universe.goldenRing)が
 //   画面上で小さく見えるとき(望遠鏡モードの既定fov・ドラッグでズームしていない状態)
 //   に白飛びする」への対応。starField/equationAssembly/バルジと同じ原因
@@ -238,11 +252,18 @@ setTripodAngularSpeed(GALAXY_ANGULAR_SPEED);
 // 針+太陽系召喚、という一連の流れを管理する(詳細はrecord.js冒頭のコメント参照)。
 // 銀河・太陽系はここで新規作成せず、上で作った既存のgalaxy/solarSystemをそのまま使う。
 const record = createRecordDisplay(scene, renderer, { camera, galaxy, solarSystem, universe, excludeFromBloom });
-// ★ 2026-10-11 追加(ご指示反映): starburstの登場は「トーンアームを置き終えた後」、クリックすると
-//   銀河が育つ(サイト全体の累計。record.js/galaxyGrowth.js参照)。starburstの星はここ(main.js)の
-//   hotspotMeshesが持っているので、recordへ渡しておく。登場前はrecord.js側が非表示に保ち、
-//   登場の瞬間にvisible=trueにする(俯瞰中のanimateでは、もう強制的にvisible=trueにしない)。
-if (starburstMeshes[0]) bindStarburst(record, starburstMeshes[0]);
+// ★ 2026-10-27 変更(ご指示反映): クリックして銀河が育つ星は、starburstではなくAスター(aStar.jsのcreateAStar)にした。
+//   登場は従来どおり「トーンアームを置き終えた後」(record.js revealClickStar)。生成直後は非表示にしておき、
+//   bindClickStarがバルジ中心へ付ける(バルジの表示/非表示に連動)。
+//   銀河が巨大(半径1000超)でカメラも遠いので、球体は A_STAR_SCALE 倍して見える大きさにする(仮値)。
+//   尾(スターダスト)はワールド座標なので、静止中でも漂うよう idleRate を与える。
+// (大きさはanimateで毎フレーム決める: carouselの実寸に合わせる。下の初期値は仮)
+const A_STAR_SCALE = 1;
+const aStar = createAStar(scene, { maxParticles: 300, idleRate: 25, life: 2.0, size: A_STAR_SCALE, spread: 0.3 });
+aStar.scale.setScalar(A_STAR_SCALE);
+aStar.visible = false;
+bindClickStar(record, aStar);
+// starburstはクリック判定を持たないので、recordへは渡さない(animateのcarouselすり替えだけで使う)。
 // 「二つのtripod・二つの円環」の対応関係クロスフェード+移動演出(tripodRingSwap.js)。
 // universe/recordの両方が揃った後でないと作れないので、ここで呼ぶ。
 const tripodRingSwap = createTripodRingSwap(scene, universe, record);
@@ -262,6 +283,16 @@ record.onSequenceComplete = () => {
 // ── スクロールによる画面切り替え(下=鏡、上=carousel)・銀河のscrub ──────────
 // 累積スクロール量を0〜SCROLL_MAXにクランプして保持し、そのままrecord.js側に渡す
 // (画面の向き・銀河の出現度合いの計算はrecord.js側で完結させている)。
+// ── トラックパッド対応: 「左右ボタン同時ドラッグ」の代替入力 ──────────────
+// macのトラックパッドは左右ボタンを同時に押せないため、次のどれでも同じ操作として扱う。
+//   ・従来どおり、左右ボタン同時押しのままドラッグ
+//   ・左ボタン(=トラックパッドのクリック)+Shiftを押したままドラッグ
+//   ・2本指の横スワイプ(wheelのdeltaX。applyProjectionWheel / applyOverviewFovWheel)
+// ※ Altは使わない(OrbitControlsの通常の回転と衝突するため。ShiftはenablePan=falseの間は無害)。
+const ZOOM_GESTURE_WHEEL_IDLE_MS = 250; // 横スワイプがこの時間途切れたら「ボタンを離した」扱い(慣性分は待つ)
+function isDragGestureDown(e) {
+  return e.buttons === 3 || (e.buttons === 1 && e.shiftKey);
+}
 let recordScrollY = 0;
 renderer.domElement.addEventListener('wheel', (e) => {
   if (!universe.isActive) return; // 宇宙ページ内でのみ有効
@@ -271,6 +302,14 @@ renderer.domElement.addEventListener('wheel', (e) => {
   //   から、一連の演出が完了する(recordSequenceDone)までの間は、スクロールを
   //   一切受け付けない。
   if (record.coronationStarted && !recordSequenceDone) return;
+  // ★ 2026-10-19 追加(ご指示反映): トラックパッドの2本指「横」スワイプ(deltaX優勢)は、
+  //   縦スクロール(演出の進行/俯瞰の高さ)ではなく、旧「左右ボタン同時ドラッグ」の代わりとして扱う。
+  //   (e.ctrlKey=ピンチはここでは何もしない)
+  if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    if (recordSequenceDone) applyOverviewFovWheel(e.deltaX);
+    else applyProjectionWheel(e.deltaX);
+    return;
+  }
   // ★ 2026-09-15 追加(ご指示反映): バナナクリック後の演出が完了した(recordSequenceDone)
   //   以降は、スクロールの用途をcarousel⇔鏡の切り替えから「銀河俯瞰カメラの高さ調整」へ
   //   切り替える。以後applyScroll(record, ...)は二度と呼ばない(呼んでも
@@ -325,7 +364,99 @@ const OVERVIEW_FOV_BASE = 70;             // 銀河俯瞰時の既定(ドラッ�
 //   「遷移的な絞り変化」にしている。
 const OVERVIEW_EXPOSURE_FAR_MULT = 0.005;  // 仮値。基準fov(遠景)側の露出倍率。1より下げて絞る
 const OVERVIEW_EXPOSURE_ZOOM_MULT = 1.0;  // 目一杯ズームした側の露出倍率(通常の明るさ)
-const OVERVIEW_FOV_ZOOMED = 0.8;            // 仮値。目一杯ドラッグしたときの最大ズーム。以前より強めた
+// ★ 2026-10-26 再変更(ご指示反映): 最大ズームfovを0.023°まで狭める案は撤回し、元の0.8°へ戻した。
+//   理由: 画面に映る範囲が約4ユニット四方になり、中心のわずかなずれで星・carouselが画面外に出る、
+//   星が暗くなる、などの副作用が多すぎたため。代わりに「拡大」の一部をcarousel側の倍率が担う
+//   (下のCAROUSEL_*参照): ズームが進むほどcarouselの実寸を CAROUSEL_FINAL_SCALE → CAROUSEL_ZOOM_SCALE へ戻す。
+// ★ 2026-10-27 変更(ご指示反映): 「拡大時のfovをもっとZOOMしたい」。0.8→0.3(約2.7倍。carouselの見かけは
+//   画面高さの約21%→約56%)。0.023°案は副作用が大きく撤回済みなので、中間の値にしてある(仮値)。
+//   ★ zoomT(=ズーム進行度)はこの値とOVERVIEW_FOV_BASEの比で決まり、carouselの倍率・starburstの膨らみ・
+//   すり替え・露出がすべてzoomTに連動する。つまりここを変えると、それらの曲線も一緒に動く。
+// ★ 2026-10-27 再々設計(ご指示反映): 「carousel自体を拡大するのではなく、実数サイズで表現したい」。
+//   carouselの大きさは実寸(ワールド単位)で一定にし、ズームはカメラのfovだけで行う。
+//     ・CAROUSEL_PHYSICAL_SIZE: carouselの実寸(最大の広がり。ワールド単位)。銀河の星1個は約0.7単位なので、
+//       6はその約8倍。もっと星に近づけたい(小さくしたい)ほど、最大ズームに必要なfovが狭くなる(下の導出)。
+//     ・最大ズームでcarouselが画面の高さの CAROUSEL_MAX_ZOOM_SCREEN_FRACTION(24%)を占めるように、
+//       OVERVIEW_FOV_ZOOMEDを実寸から逆算する(=「実寸÷占有率」が視野の高さ。fov=2·atan(視野の高さ÷2÷距離))。
+//     ・fovが極端に狭いと、カメラの注視点ズレや描画精度の問題が出やすい(以前の0.023°案がそうだった)ので、
+//       OVERVIEW_FOV_MINで下限を置いてある。下限に当たった場合は24%に届かない(コンソールに警告)。
+const CAROUSEL_PHYSICAL_SIZE = 6;                   // 仮値。carouselの実寸(ワールド単位)
+const CAROUSEL_MAX_ZOOM_SCREEN_FRACTION = 0.24;     // 仮値。最大ズームで画面の高さに占める割合
+const OVERVIEW_FOV_MIN = 0.05;                      // 仮値。fovの下限(度)
+const OVERVIEW_FOV_ZOOMED_WANTED = THREE.MathUtils.radToDeg(
+  2 * Math.atan(CAROUSEL_PHYSICAL_SIZE / CAROUSEL_MAX_ZOOM_SCREEN_FRACTION / 2 / UNIVERSE_CAMERA_DISTANCE));
+const OVERVIEW_FOV_ZOOMED = Math.max(OVERVIEW_FOV_MIN, OVERVIEW_FOV_ZOOMED_WANTED); // 目一杯ドラッグしたときの最大ズーム
+if (OVERVIEW_FOV_ZOOMED > OVERVIEW_FOV_ZOOMED_WANTED) {
+  console.warn('[carousel] fovが下限に当たった: 最大ズームのcarouselは画面の約' +
+    (CAROUSEL_PHYSICAL_SIZE / (2 * UNIVERSE_CAMERA_DISTANCE * Math.tan(THREE.MathUtils.degToRad(OVERVIEW_FOV_ZOOMED) / 2)) * 100).toFixed(0) + '%');
+}
+// 星(銀河・バルジ・Aスターの尾)の点の大きさを、ズームに合わせて大きくする係数(zoomFactor)。
+//   星はシェーダーが「ピクセル数」で描くため、そのままだとfovを狭めても大きさが変わらず、
+//   carouselだけが拡大されて見える。係数=tan(基準fov/2)÷tan(現在fov/2)を掛けて実寸のまま拡大する。
+// ★ 2026-10-19 追加(ご指示反映): 「最遠点に着いた後に急に暗くなる」の修正。
+//   露出は明るさに掛け算で効くため、旧来のlerp(線形補間)だと 1→0.005 の途中
+//   (例: 0.1→0.005 の20倍の変化)がフライトの最後の2割に集中し、遠景に着く直前〜直後に
+//   急に暗く見えていた。そこで露出は常に「対数(等比)補間」で動かし、しかもfov(=ズーム)の
+//   進み具合そのものから計算する(overviewExposureForFov)。フライト・ドラッグ・解除で戻る
+//   動きのどれでも「同じズーム量なら同じ明るさ」になり、変化も一定の割合で穏やかになる。
+//   OVERVIEW_EXPOSURE_DIM_CURVE: 1.0=純粋な等比。1より小さくすると遠景へ向かう早い段階から
+//   暗くし始める(トーンマップで白飛びが残り「しばらく変わらず最後に急に暗い」場合に下げる)。
+const OVERVIEW_EXPOSURE_DIM_CURVE = 1.0;
+// ★ 2026-10-26 追加(ご指示反映): carouselは極小にしておき、小さい間はstarburstで代替、拡大(fovズーム)が
+//   閾値を越えたらcarouselへすり替える。
+//   ・俯瞰突入フライトに合わせて carouselの倍率は 1→CAROUSEL_FINAL_SCALE へ対数補間で縮む(極小)。
+//   ・ズームが進むと倍率は CAROUSEL_ZOOM_SCALE(=1で元の大きさ)へ向かって対数補間で戻る(ズームの進行度で連動)。
+//     最大ズームでの見かけサイズは「元の約58%」(カメラ距離10000・fov0.8°と、突入前の距離40.7・fov90°の比較)。
+//     もっと大きくしたければCAROUSEL_ZOOM_SCALEを上げる(1.7で突入前と同じ見かけサイズ)。
+//   ・ズームの進行度 zoomT は fov から対数で求める(overviewZoomProgress)。fovも対数補間で動かしている
+//     ので、ドラッグ量に対して均等に進む。
+//   ・すり替えはzoomTだけで判定(SHOW以上でcarousel、HIDE未満でstarburst。ちらつき防止のヒステリシス)。
+//   ★ 2026-10-27 変更: starburstの登場条件(トーンアーム設置後)は撤廃。starburstは常に「つなぎ」役。
+//   ★ 2026-10-27 バグ修正(「carouselが収縮しない」): 以前は突入した瞬間(zoomT=0 < HIDE)に
+//     すり替え判定がstarburst側へ倒れ、縮小フライト(overviewFlightT 0→1)の最中ずっとcarouselが
+//     非表示になっていたため、縮んでいく様子がまったく見えなかった。すり替え判定は
+//     フライトが終わってから(!overviewFlightInProgress)行うようにした。
+// ★ 2026-10-27 バグ修正(「carouselが小さくならない」の本当の原因): 見かけの大きさは
+//   「倍率 ÷ (カメラ距離 × tan(fov/2))」で決まる。俯瞰フライトではカメラが距離約41→10000へ約250倍
+//   遠ざかるので、倍率0.05(20倍の縮小)の効果はその陰に隠れて見えなかった(universe.jsの
+//   setCarouselScale自体は正しく動いている)。そこでフライトを2段に分けた:
+//     ①フライト前半(CAROUSEL_SHRINK_PHASE。全体に対する時間の割合): カメラは動かさず、carouselだけが
+//       その場で 1→CAROUSEL_FINAL_SCALE へ縮む(縮小が画面上でそのまま見える)。
+//     ②後半: 従来どおりカメラが遠景へ退く(位置・fov・露出)。
+const CAROUSEL_SHRINK_PHASE = 0.2;           // 仮値。24秒×0.2=約5秒かけて、その場で縮ませる
+// ★ 2026-10-27 変更(「最大ズームでcarouselが大きい」+「fov・距離・スケールが依存しあっている」への対応):
+//   以前は最大ズームの倍率を固定値1.0(=元の大きさ)にしていた。しかし見かけの大きさは
+//   「倍率 ÷ (距離 × tan(fov/2))」なので、fovを狭める(=もっとZOOMする)と、carouselまで一緒に
+//   画面いっぱいへ膨らんでしまう(fov 0.8→0.3で、画面高さの約21%→約57%になっていた)。
+//   そこで倍率を直指定せず、「最大ズームのときcarouselが画面の高さの何割を占めるか」で指定し、
+//   その割合になる倍率をfov・距離から逆算するようにした。これでOVERVIEW_FOV_ZOOMEDや
+//   カメラ距離を変えても、最大ズームでのcarouselの見かけの大きさは変わらない(銀河側だけが拡大される)。
+let carouselNativeSize = 30;                        // carouselの実寸(最大の広がり)。俯瞰突入時に実測して上書きする(下のmeasureCarouselNativeSize)。実測できなければこの概算値
+// ★ 実寸を決め打ち(30)にしていたのが、「12%にならない」原因の可能性が高い。tripod・数式スプライト・リングを
+//   含めた実際の広がり(Box3)を、倍率1のうちに(=俯瞰突入の直前に)測る。
+function measureCarouselNativeSize() {
+  if (!universe.carouselRoot) return;
+  universe.carouselRoot.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(universe.tripodAnchor);
+  box.expandByObject(universe.goldenRing);
+  const size = box.getSize(new THREE.Vector3());
+  const ws = universe.tripodAnchor.getWorldScale(new THREE.Vector3()).x || 1;
+  const n = Math.max(size.x, size.y, size.z) / ws;
+  console.log('[carousel] 実寸を計測', { x: +(size.x / ws).toFixed(1), y: +(size.y / ws).toFixed(1), z: +(size.z / ws).toFixed(1), 採用: +n.toFixed(1) });
+  if (isFinite(n) && n > 1) carouselNativeSize = n;
+}
+// ★ 2026-10-27 変更(ご指示反映): 切り替えを拡大寄りへ(0.80→0.92 / 0.70→0.85)。starburstが小さいまま
+//   大きなcarouselへ切り替わって見えたため、carouselのサイズは変えず、切り替えをもっとズームした所へずらした。
+//   (その分、starburstは切り替え地点に向けて膨らませる。STARBURST_SWAP_SCALE参照)
+const CAROUSEL_SWAP_ZOOM_SHOW = 0.92;       // 仮値。zoomTがこれ以上でcarouselへすり替え(fovで約0.24°)
+const CAROUSEL_SWAP_ZOOM_HIDE = 0.85;       // 仮値。これを下回ったらstarburstへ戻す
+let carouselShownAsCarousel = true;         // すり替え状態(trueでcarousel、falseでstarburst)
+let starburstBaseSize = null;                // starburstメッシュのscale=1での広がり(初回に実測)
+const _tmpScale = new THREE.Vector3();
+let starZoomMaterials = [];                 // uZoomを持つ星のマテリアル(銀河・バルジ・Aスターの尾)
+let starZoomRefreshTimer = 0;
+let carouselLogTimer = 0;                   // 診断ログの間隔用
+let carouselScaleChecked = false;           // 縮小が反映されているかの診断を1回だけ出すためのフラグ
 const OVERVIEW_FOV_DRAG_DISTANCE = 400;   // 仮値。このぶん(px)左右ドラッグしたらズームが振り切る
 const OVERVIEW_FOV_RESET_DURATION = 0.6 / OVERVIEW_CAMERA_SPEED_RATIO; // ドラッグを離したときにbase fovへ戻る秒数(元0.6秒→12秒)
 // ★ 2026-09-16 追加(ご指示反映): 最後の俯瞰画面で、レコード(=universe.goldenRing。
@@ -476,11 +607,16 @@ function overviewPositionForElevationDeg(elevationDeg) {
 
 // 現在のoverviewScrollCurrentから仰角を計算し、カメラへ反映する(距離は常に一定=
 // 近づく移動は発生しない)。
+const _overviewLookTarget = new THREE.Vector3();
 function applyOverviewCameraHeight() {
   const t = overviewScrollCurrent / OVERVIEW_SCROLL_RANGE; // 0〜1
   const elevationDeg = t * OVERVIEW_ELEVATION_MAX_DEG;
   camera.position.copy(overviewPositionForElevationDeg(elevationDeg));
-  camera.lookAt(UNIVERSE_CAMERA_TARGET);
+  // ★ 2026-10-26 追加: ズームが進むほど、注視点を銀河中心(ORBIT_CENTER=縮小したcarouselとstarburstの
+  //   位置)へ寄せる。狭いfovでは注視点のわずかなずれが画面外へのずれになるため。
+  //   zoomT=0では従来どおりUNIVERSE_CAMERA_TARGETなので、遠景の見え方は変わらない。
+  _overviewLookTarget.lerpVectors(UNIVERSE_CAMERA_TARGET, ORBIT_CENTER, overviewZoomProgress());
+  camera.lookAt(_overviewLookTarget);
 }
 
 // 毎フレーム呼ぶ(animate内、overviewActive中のみ意味を持つ)。overviewScrollCurrentを
@@ -547,6 +683,8 @@ function calmGalaxyArms() {
 function enterGalaxyOverview() {
   if (overviewActive) return;
   overviewActive = true;
+  measureCarouselNativeSize(); // 倍率1のうちに実寸を測る
+  console.log('[overview] enter: carousel縮小フライト開始');
   tiltShiftIntroStart = clock.getElapsedTime(); // ★ 追加: ここからTILT_SHIFT_INTRO_DURATION秒だけフェードイン
   if (controls) controls.enabled = false; // telescopeモード中は専用のスクロール/ドラッグでのみ制御する
 
@@ -567,15 +705,20 @@ function enterGalaxyOverview() {
 
   const startPos = camera.position.clone();
   const startFov = camera.fov;
+  carouselShownAsCarousel = true; // 突入時はcarouselから始める(すり替えはフライト終了後、fovが決める)
   const startExposure = renderer.toneMappingExposure; // ★ 追加: 突入前の露出(=以後の基準値)
   const targetExposure = startExposure * OVERVIEW_EXPOSURE_FAR_MULT;
   const flight = { t: 0 };
+  const easeInOut = gsap.parseEase('power2.inOut');
   overviewFlightInProgress = true;
   gsap.to(flight, {
     t: 1,
     duration: OVERVIEW_TRANSITION_DURATION,
-    ease: 'power2.inOut',
+    ease: 'none', // 時間の進みは線形のまま受け取り、下で縮小用/カメラ用にそれぞれeaseをかける
     onUpdate: () => {
+      // ①前半: carouselの縮小だけ(shrinkT 0→1)。②後半: カメラの退き(moveT 0→1)。
+      const shrinkT = easeInOut(Math.min(flight.t / CAROUSEL_SHRINK_PHASE, 1));
+      const moveT = easeInOut(Math.max((flight.t - CAROUSEL_SHRINK_PHASE) / (1 - CAROUSEL_SHRINK_PHASE), 0));
       // ★ 修正: 固定の目的地(旧targetPos=仰角0°)ではなく、「今スクロールが指している仰角」の
       //   位置を毎フレーム計算してブレンド先にする。updateOverviewCameraHeight()がフライト中も
       //   overviewScrollCurrentを更新し続けているので、フライトの最中にスクロールしても、
@@ -583,12 +726,14 @@ function enterGalaxyOverview() {
       //   反映され、フライトが終わる頃には完全にスクロール操作と一致した状態になる。
       const elevationDeg = (overviewScrollCurrent / OVERVIEW_SCROLL_RANGE) * OVERVIEW_ELEVATION_MAX_DEG;
       const basePos = overviewPositionForElevationDeg(elevationDeg);
-      camera.position.lerpVectors(startPos, basePos, flight.t);
-      camera.fov = THREE.MathUtils.lerp(startFov, OVERVIEW_FOV_BASE, flight.t);
-      renderer.toneMappingExposure = THREE.MathUtils.lerp(startExposure, targetExposure, flight.t); // ★ 追加: fovと同時に絞りも遷移
+      camera.position.lerpVectors(startPos, basePos, moveT);
+      camera.fov = THREE.MathUtils.lerp(startFov, OVERVIEW_FOV_BASE, moveT);
+      // ★ 修正: 線形lerpをやめ、fov(flight.t)と同じ進み方の等比補間にした(冒頭のコメント参照)。
+      renderer.toneMappingExposure = startExposure
+        * Math.pow(OVERVIEW_EXPOSURE_FAR_MULT, Math.pow(moveT, OVERVIEW_EXPOSURE_DIM_CURVE));
       camera.updateProjectionMatrix();
       camera.lookAt(UNIVERSE_CAMERA_TARGET);
-      overviewFlightT = flight.t;
+      overviewFlightT = shrinkT; // carousel縮小の進行度(カメラの進行度ではない)
     },
     onComplete: () => {
       overviewFlightInProgress = false;
@@ -624,14 +769,13 @@ function applyGalaxyOverviewScroll(deltaY) {
 //   まるごと無効化し、フライト完了後にだけドラッグズームを受け付けるようにする。
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (!overviewActive || overviewFlightInProgress) return;
-  const bothDown = e.buttons === 3; // 左(1)+右(2)の同時押し
+  if (overviewFovInputMode === 'wheel') return; // 2本指スワイプ中はポインタ移動で中断しない
+  const bothDown = isDragGestureDown(e); // 左右同時押し、または左ボタン+Shift
 
   if (!overviewFovDragActive) {
     if (!bothDown) return;
-    overviewFovDragActive = true;
+    beginOverviewFovDrag('pointer');
     overviewFovDragStartX = e.clientX;
-    if (overviewFovResetTween) overviewFovResetTween.kill(); // 戻り途中に再ドラッグしたら即座に手動制御へ戻す
-    if (overviewExposureResetTween) overviewExposureResetTween.kill(); // 絞りも同様
     return;
   }
 
@@ -641,37 +785,84 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   }
 
   // 左右どちらへドラッグしてもズーム量として扱う(距離が大きいほど狭fov=望遠寄り)。
-  const dragged = Math.abs(e.clientX - overviewFovDragStartX);
-  const zoomT = THREE.MathUtils.clamp(dragged / OVERVIEW_FOV_DRAG_DISTANCE, 0, 1);
-  camera.fov = THREE.MathUtils.lerp(OVERVIEW_FOV_BASE, OVERVIEW_FOV_ZOOMED, zoomT);
-  // ★ 追加: fovのズームと同じ量(zoomT)で絞りも一緒に開けていく(遠景=絞る/望遠=開ける)。
-  renderer.toneMappingExposure = overviewBaseExposure
-    * THREE.MathUtils.lerp(OVERVIEW_EXPOSURE_FAR_MULT, OVERVIEW_EXPOSURE_ZOOM_MULT, zoomT);
-  camera.updateProjectionMatrix();
+  applyOverviewFovZoom(Math.abs(e.clientX - overviewFovDragStartX));
 });
 window.addEventListener('pointerup', () => {
-  if (overviewFovDragActive) endOverviewFovDrag();
+  if (overviewFovDragActive && overviewFovInputMode === 'pointer') endOverviewFovDrag();
 });
+
+// ★ 2026-10-19 追加(ご指示反映): トラックパッド用に、2本指の横スワイプでも同じfovズームを
+//   操作できるようにした(wheelのdeltaX。押している間だけ…の代わりに、スワイプが途切れて
+//   ZOOM_GESTURE_WHEEL_IDLE_MSたつとボタンを離したのと同じ扱いでbase fovへ戻る)。
+let overviewFovInputMode = null;   // null | 'pointer' | 'wheel'
+let overviewFovWheelAccum = 0;
+let overviewFovWheelTimer = null;
+
+function beginOverviewFovDrag(mode) {
+  overviewFovDragActive = true;
+  overviewFovInputMode = mode;
+  if (overviewFovResetTween) overviewFovResetTween.kill(); // 戻り途中に再ドラッグしたら即座に手動制御へ戻す
+  if (overviewExposureResetTween) overviewExposureResetTween.kill(); // 絞りも同様
+}
+
+// 現在のfovから、対応する露出を等比補間で返す(基準fov=遠景で絞る/最大ズームで通常の明るさ)。
+// ドラッグ中・ドラッグ解除で戻る動きの両方で使い、露出が常にズームに追従するようにする。
+// ★ ズームの進行度(0=基準fov、1=最大ズーム)。fovを等比補間で動かしているので対数で求める。
+function overviewZoomProgress(fov = camera.fov) {
+  return THREE.MathUtils.clamp(
+    Math.log(OVERVIEW_FOV_BASE / Math.max(fov, 1e-6)) / Math.log(OVERVIEW_FOV_BASE / OVERVIEW_FOV_ZOOMED), 0, 1);
+}
+
+function overviewExposureForFov(fov) {
+  // ★ fovを等比補間で動かすようにしたので、ズーム進行度も対数で求める(線形のままだと逆算がずれる)
+  const zoomT = THREE.MathUtils.clamp(
+    Math.log(OVERVIEW_FOV_BASE / Math.max(fov, 1e-6)) / Math.log(OVERVIEW_FOV_BASE / OVERVIEW_FOV_ZOOMED), 0, 1);
+  const dim = Math.pow(1 - zoomT, OVERVIEW_EXPOSURE_DIM_CURVE); // 1=遠景側、0=最大ズーム側
+  return overviewBaseExposure
+    * Math.pow(OVERVIEW_EXPOSURE_FAR_MULT, dim)
+    * Math.pow(OVERVIEW_EXPOSURE_ZOOM_MULT, 1 - dim);
+}
+
+function applyOverviewFovZoom(draggedPx) {
+  const zoomT = THREE.MathUtils.clamp(draggedPx / OVERVIEW_FOV_DRAG_DISTANCE, 0, 1);
+  camera.fov = OVERVIEW_FOV_BASE * Math.pow(OVERVIEW_FOV_ZOOMED / OVERVIEW_FOV_BASE, zoomT); // 等比(対数)補間
+  // ★ 修正: 絞りはfovに追従させる(遠景=絞る/望遠=開ける。等比補間)。
+  renderer.toneMappingExposure = overviewExposureForFov(camera.fov);
+  camera.updateProjectionMatrix();
+}
+
+function applyOverviewFovWheel(deltaX) {
+  if (!overviewActive || overviewFlightInProgress) return; // フライト中は無効(上のバグ修正コメント参照)
+  if (overviewFovInputMode === 'pointer') return;
+  if (!overviewFovDragActive) {
+    beginOverviewFovDrag('wheel');
+    overviewFovWheelAccum = 0;
+  }
+  overviewFovWheelAccum += deltaX;
+  applyOverviewFovZoom(Math.abs(overviewFovWheelAccum));
+  if (overviewFovWheelTimer) clearTimeout(overviewFovWheelTimer);
+  overviewFovWheelTimer = setTimeout(endOverviewFovDrag, ZOOM_GESTURE_WHEEL_IDLE_MS);
+}
 
 // ドラッグ解除時にbase fovへ、早すぎず遅すぎずの速度(OVERVIEW_FOV_RESET_DURATION秒)で
 // 戻す。
 function endOverviewFovDrag() {
   overviewFovDragActive = false;
+  overviewFovInputMode = null; // ★ pointer/wheelどちらのセッションもここで終了(入力モードを必ず戻す)
+  overviewFovWheelAccum = 0;
+  if (overviewFovWheelTimer) { clearTimeout(overviewFovWheelTimer); overviewFovWheelTimer = null; }
   overviewFovResetTween = gsap.to(camera, {
     fov: OVERVIEW_FOV_BASE,
     duration: OVERVIEW_FOV_RESET_DURATION,
     ease: 'power2.out',
-    onUpdate: () => camera.updateProjectionMatrix(),
+    onUpdate: () => {
+      camera.updateProjectionMatrix();
+      // ★ 修正: 別tweenで露出を動かすのをやめ、戻っていくfovから毎フレーム露出を計算する
+      //   (露出がズームと完全に同期し、遠景側へ戻るときも急に暗くならない)。
+      renderer.toneMappingExposure = overviewExposureForFov(camera.fov);
+    },
   });
-  // ★ 追加: fovが基準へ戻るのと同じ速さで、絞りも遠景側(暗い方)へ戻す。
-  if (overviewExposureResetTween) overviewExposureResetTween.kill();
-  const exposureProxy = { v: renderer.toneMappingExposure };
-  overviewExposureResetTween = gsap.to(exposureProxy, {
-    v: overviewBaseExposure * OVERVIEW_EXPOSURE_FAR_MULT,
-    duration: OVERVIEW_FOV_RESET_DURATION,
-    ease: 'power2.out',
-    onUpdate: () => { renderer.toneMappingExposure = exposureProxy.v; },
-  });
+  if (overviewExposureResetTween) overviewExposureResetTween.kill(); // 旧tweenが残っていれば止める
 }
 
 // ── 疑似正射影 ⇄ 透視図の右ドラッグ切り替え ─────────────────────
@@ -694,7 +885,8 @@ const PROJECTION_DRAG_DISTANCE = 400; // このぶん(px)ドラッグしたら�
 //   まとめ、pointerdownには依存しないようにする(マウスが動いた瞬間に判定するので、
 //   同時押しした後に少しでもカーソルが動けば確実に拾える)。
 renderer.domElement.addEventListener('pointermove', (e) => {
-  const bothDown = e.buttons === 3; // 左(1)+右(2)の同時押し
+  if (projectionInputMode === 'wheel') return; // 2本指スワイプ中はポインタ移動で中断しない
+  const bothDown = isDragGestureDown(e);
 
   if (!projectionDragActive) {
     if (!bothDown) return;
@@ -705,30 +897,81 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     //   旧来の「距離を変えるズーム」(setUniverseProjectionMix)が起動してしまっていた。
     //   overviewActiveではなくrecordSequenceDone(演出完了後は恒久的にtrue)で判定する
     //   ことで、スクロールの有無に関わらず演出完了後はこの旧ハンドラを確実に無効化する。
-    if (!universe.isActive || record.perspectiveActive || recordSequenceDone) return; // universe開始前 or 切り替え済み or バナナ演出完了後なら無視
+    if (!canStartProjectionDrag()) return; // universe開始前 or 切り替え済み or バナナ演出完了後なら無視
     projectionDragActive = true;
+    projectionInputMode = 'pointer';
     projectionDragStartX = e.clientX;
     return; // 開始位置を記録するだけ。動かすのは次のmoveから
   }
 
   if (!bothDown || !universe.isActive) {
     // 途中でどちらかのボタンを離した(またはuniverse.isActiveでなくなった)→中断して疑似正射影側へ戻す。
-    projectionDragActive = false;
-    if (!record.perspectiveActive) {
-      projectionMixValue = 0;
-      setUniverseProjectionMix(0);
-    }
+    cancelProjectionDrag();
     return;
   }
 
-  const dragged = e.clientX - projectionDragStartX; // 右方向ドラッグで透視図へ進める(仮の向き)
-  projectionMixValue = THREE.MathUtils.clamp(dragged / PROJECTION_DRAG_DISTANCE, 0, 1);
+  updateProjectionDrag(e.clientX - projectionDragStartX); // 右方向ドラッグで透視図へ進める(仮の向き)
+});
+
+// ── 投影切り替えの共通処理(ポインタ操作とトラックパッドの2本指スワイプで共用) ──
+// ★ 2026-10-19 追加(ご指示反映): macのトラックパッドには「左右ボタン同時押しドラッグ」が
+//   無いため、次の2つを同じ処理に流し込めるようにした。
+//   ① 左ボタン+Shiftを押しながらドラッグ(isDragGestureDown。押している間だけ有効)
+//   ② 2本指の横スワイプ(wheelのdeltaX。applyProjectionWheel参照)
+//   従来の左右同時押しドラッグもそのまま使える。
+let projectionInputMode = null;       // null | 'pointer' | 'wheel'(どの入力でセッション中か)
+let projectionWheelAccum = 0;         // wheel入力でのdeltaX累積(符号付き)
+let projectionWheelTimer = null;      // wheel入力が途切れたら中断するためのタイマー
+
+function canStartProjectionDrag() {
+  return universe.isActive && !record.perspectiveActive && !recordSequenceDone;
+}
+
+function updateProjectionDrag(draggedPx) {
+  projectionMixValue = THREE.MathUtils.clamp(draggedPx / PROJECTION_DRAG_DISTANCE, 0, 1);
   setUniverseProjectionMix(projectionMixValue); // ★ UNIVERSE_CAMERA_POSの角度を維持したまま距離・fovだけ変える専用ミキサー
   if (projectionMixValue >= 1 && !record.perspectiveActive) {
-    record.perspectiveActive = true; // ★ 右ドラッグでの透視図切り替えが確定した
-    unlockIh(universe); // ★ 左右同時ドラッグ完了後にだけihが出現できるようにする
+    record.perspectiveActive = true; // ★ 透視図切り替えが確定した
+    unlockIh(universe);              // ★ 左右同時ドラッグ(相当)完了後にだけihが出現できるようにする
   }
-});
+}
+
+function cancelProjectionDrag() {
+  projectionDragActive = false;
+  projectionInputMode = null;
+  projectionWheelAccum = 0;
+  if (projectionWheelTimer) { clearTimeout(projectionWheelTimer); projectionWheelTimer = null; }
+  if (!record.perspectiveActive) {
+    projectionMixValue = 0;
+    setUniverseProjectionMix(0);
+  }
+}
+
+// wheelハンドラ(横スワイプ優勢のとき)から呼ぶ。
+// deltaXは「ナチュラルスクロール」の設定で符号が反転するため、累積の絶対値で進行量を決める
+// (どちら向きにスワイプしても進む。逆向きに戻せば戻る)。
+function applyProjectionWheel(deltaX) {
+  if (projectionInputMode === 'pointer') return; // ポインタ操作中は無視
+  if (!projectionDragActive) {
+    if (!canStartProjectionDrag()) return;
+    projectionDragActive = true;
+    projectionInputMode = 'wheel';
+    projectionWheelAccum = 0;
+  }
+  projectionWheelAccum += deltaX;
+  updateProjectionDrag(Math.abs(projectionWheelAccum));
+  if (projectionWheelTimer) clearTimeout(projectionWheelTimer);
+  if (record.perspectiveActive) {
+    // 確定したのでセッション終了(以後、銀河の自転が始まる)
+    projectionDragActive = false;
+    projectionInputMode = null;
+    projectionWheelAccum = 0;
+    projectionWheelTimer = null;
+  } else {
+    // 慣性スクロールが終わって一定時間入力が無ければ、ボタンを離したのと同じ扱いで中断する
+    projectionWheelTimer = setTimeout(cancelProjectionDrag, ZOOM_GESTURE_WHEEL_IDLE_MS);
+  }
+}
 
 renderer.domElement.addEventListener('contextmenu', (e) => {
   // ★ 2026-09-12 再修正: record.phaseとの連動が不安定だったため条件から外し、
@@ -739,20 +982,27 @@ renderer.domElement.addEventListener('contextmenu', (e) => {
 
 // pointermove側で継続判定しているので、pointerupは「マウスを動かさずにボタンだけ離した」
 // 場合の保険として残す(通常はpointermove側で先に中断処理される)。
+// ★ wheel(2本指スワイプ)で開始したセッションは、pointerupでは終了させない(指を離した後の
+//   慣性スクロールを待つ「無入力タイマー」側で終了する)。
 window.addEventListener('pointerup', () => {
-  if (!projectionDragActive) return;
-  projectionDragActive = false;
-  if (!record.perspectiveActive) {
-    // 確定(1)に達しないまま離した場合は、疑似正射影側へ戻す(仮の挙動。
-    // 「一定量ドラッグし切らないと切り替わらない」という中断可能な操作感にしている)。
-    projectionMixValue = 0;
-    setUniverseProjectionMix(0);
-  }
+  if (!projectionDragActive || projectionInputMode !== 'pointer') return;
+  // 確定(1)に達しないまま離した場合は、疑似正射影側へ戻す(仮の挙動。
+  // 「一定量ドラッグし切らないと切り替わらない」という中断可能な操作感にしている)。
+  cancelProjectionDrag();
 });
 
+// ★ 2026-10-28 追加: Z軸の波(zWave)もBloom対象から外す(axesと同じ方法)。
+const _childrenBeforeZWave = new Set(scene.children);
 const zWave = createZAxisWave(scene); // Z軸:ガウス波束のらせん(軸到達後にreveal、その後ゆっくり位相回転)
+scene.children.filter((c) => !_childrenBeforeZWave.has(c)).forEach((c) => excludeFromBloom(c));
 const axisLabels = createAxisLabels(scene); // 三軸(X/Y/Z)のラベル(home状態になったら表示)
+// ★ 2026-10-28 追加: 軸ラベル(X/Y/Z)もBloom対象から外す。
+Object.values(axisLabels.sprites).forEach((sprite) => excludeFromBloom(sprite));
 const axisStationOverlay = createAxisStationOverlay(scene); // X/Y軸ステーション限定の追加表示(終端・原点の点+タイトル)
+// ★ 追加: オーバーレイ(終端の点+極小スパイクの星+タイトル)もBloom対象から外す。
+//   UnrealBloomPassが小さく硬い点を丸い塊に膨らませ、終端のスパイクを埋もれさせていたため。
+//   (点・星は子なので、groupを渡せばまとめて除外される)
+excludeFromBloom(axisStationOverlay.group);
 const axisConstellationOverlay = createAxisConstellationOverlay(scene); // Teddy/Catcherクリック時の星座風画像(現時点ではTeddyのみ画像あり)
 const yzPanel = createYZPanel(scene); // Y軸ステーション時、YZ平面(概念Y全長×概念Z全長)に浮かぶ反射・透明パネル
 const nineBall = createNineBall({
@@ -980,9 +1230,15 @@ function showAxisTipText(message) {
   if (!message || !message.text) return;
   if (axisTipHideTimer) { clearTimeout(axisTipHideTimer); axisTipHideTimer = null; }
   axisTipCaption.setText(message.text);
-  const sourceCaption = getSourceCaption();
-  if (message.work) sourceCaption.setText(message.work);
-  else sourceCaption.hide();
+  // ★ 2026-10-20 変更(ご指示反映): 「I'm saving them.」を出している間は、その出典(右下)を
+  //   永久表示にする。共有の出典ボックスは1つしかないため、軸ラベルをクリックしたときに
+  //   出典を書き換えたり(message.work)、消したり(workなし)せず、出しっぱなしにする
+  //   (この間、軸ラベル側のworkは表示されない)。
+  if (!isSavingWorkActive()) {
+    const sourceCaption = getSourceCaption();
+    if (message.work) sourceCaption.setText(message.work);
+    else sourceCaption.hide();
+  }
   axisTipHideTimer = setTimeout(() => {
     axisTipHideTimer = null;
     hideAxisTipText();
@@ -991,8 +1247,9 @@ function showAxisTipText(message) {
 function hideAxisTipText() {
   if (axisTipHideTimer) { clearTimeout(axisTipHideTimer); axisTipHideTimer = null; }
   axisTipCaption.hide();
-  getSourceCaption().hide();
-  reapplySavingWork(); // 「I'm saving them.」を出している間は、その出典(右下)を出し直す
+  // ★ 変更: 「I'm saving them.」の出典は永久表示なので、出している間は消さない
+  //   (以前は一度hideしてから出し直していたため、クリックのたびに消えて見えていた)。
+  if (!isSavingWorkActive()) getSourceCaption().hide();
 }
 
 
@@ -1252,8 +1509,11 @@ renderer.domElement.addEventListener('click', (e) => {
           // それが完全に終わってからĤ(=startPhase1本体)を登場させる。
           playOriginBurst({
             scene,
+            camera, // ← 流れ星を「画面右上」から出すために必須(以前は未指定でワールド軸基準になっていた)
+            axes,   // ← リング通過で xAxis / zAxis を消す。描き直しは下の startPhase1(axisRedraw)がĤ・ħの移動で行う
             onComplete: () => {
               const result = startPhase1({
+                axisRedraw: takeBurstAxisRedraw(), // ← バーストで消したZ軸・X軸を、Ĥ・ħの移動で描き直す
                 assembly: equationAssembly,
                 existingISprite: finale.iSprite,
                 camera,
@@ -1279,13 +1539,46 @@ renderer.domElement.addEventListener('click', (e) => {
   if (finaleHit) {
     finaleActive = true;
     cameraBusy = true; // 念のため既存の排他制御にも乗せておく
-    runFinale({
-      camera, controls, dialogue, finale,
-      onOrigin: () => { /* 必要ならここで公案の見た目切り替え等 */ },
-      onDone: () => {
-        finaleCameraSettled = true; // ← カメラがFINALE_DESTに完全静止。ここで初めてiクリックを受け付ける
-      },
-    });
+    // ★ 2026-10-21 追加(「Shift+左ドラッグでカメラを横移動してからfinaleに入ると、
+    //   phase1→phase3のカメラ移動がおかしくなる」への対応): OrbitControlsのパン
+    //   (Shift+左ドラッグ)はcamera.positionとcontrols.targetを同じ量だけ平行移動する。
+    //   finale以降の演出は「ホームの標準姿勢(target=HOME_CAMERA_TARGET)から始まる」前提の
+    //   ため、パンが残ったまま入ると、開始姿勢が毎回ズレて以後の移動量がずれる。
+    //   そこで突入の直前に、パン分(controls.target - HOME_CAMERA_TARGET)だけ
+    //   camera/targetを短いtweenで戻して標準姿勢に揃えてから、runFinaleを始める。
+    const startFinale = () => {
+      runFinale({
+        camera, controls, dialogue, finale,
+        onOrigin: () => { /* 必要ならここで公案の見た目切り替え等 */ },
+        onDone: () => {
+          finaleCameraSettled = true; // ← カメラがFINALE_DESTに完全静止。ここで初めてiクリックを受け付ける
+        },
+      });
+    };
+    const panOffset = controls ? controls.target.clone().sub(HOME_CAMERA_TARGET) : null;
+    if (controls) controls.enablePan = false; // 突入後にパンが再発しないように(finale中はcontrols.updateも止まっているが念のため)
+    if (panOffset && panOffset.lengthSq() > 1e-6) {
+      controls.enabled = false;
+      const camStart = camera.position.clone();
+      const tgtStart = controls.target.clone();
+      const p = { t: 0 };
+      gsap.to(p, {
+        t: 1, duration: 0.5, ease: 'power2.inOut',
+        onUpdate: () => {
+          camera.position.copy(camStart).addScaledVector(panOffset, -p.t);
+          controls.target.copy(tgtStart).addScaledVector(panOffset, -p.t);
+          camera.lookAt(controls.target);
+        },
+        onComplete: () => {
+          camera.position.copy(camStart).sub(panOffset);
+          controls.target.copy(HOME_CAMERA_TARGET);
+          camera.lookAt(controls.target);
+          startFinale();
+        },
+      });
+    } else {
+      startFinale();
+    }
     return;
   }
 
@@ -1451,7 +1744,8 @@ if (archer.visible) {
 renderer.domElement.addEventListener('pointermove', (e) => {
   // 宇宙ページ内: マウスが方程式画像に近づくほど色がじわっと変化する遊び。
   // isActiveでない間はuniverse.js側で即returnするので、呼びっぱなしで無害。
-  updateEquationHoverByPointer(universe, camera, e.clientX, e.clientY);
+  // ★ 2026-10-27 撤廃(ご指示反映): 方程式の画像の「色変化の遊び効果」(ポインターが近いほど色が変わる)をやめた。
+  //   updateEquationHoverByPointer(universe, camera, e.clientX, e.clientY);
 
   const inputEnabled = !cameraBusy && intro.getState() === 'home';
 
@@ -1506,6 +1800,28 @@ window.addEventListener('keydown', (e) => {
   dumpCamera('keydown');
 });
 
+// ── finale以前: カメラが星の外側へ出ないようにする「見えない壁+重力」 ─────
+// 原点からの距離がCAMERA_GRAVITY_START以内なら何もしない。それより外では、外へ行くほど
+// 強くなる原点方向の引力(二次カーブ)でカメラを引き戻し、CAMERA_HARD_LIMITでは完全に止める。
+// ・controls.update()の直後に呼ぶこと(OrbitControlsはupdate内でcamera.positionから
+//   毎回オフセットを読み直すので、ここで位置を書き換えても内部状態と食い違わない)。
+// ・ユーザー操作中(controls.enabled)だけ補正する。GSAPによる自動移動中(flyTo系はcontrolsを
+//   無効化する)に壁を効かせると、演出のtweenと喧嘩して挙動が崩れるため。
+// ・finale開始後・宇宙ページ中は呼ばれない(animate側の条件参照)ので、そこでは自由に動ける。
+function applyStarBoundary(deltaSeconds) {
+  const r = camera.position.length();
+  if (r <= CAMERA_GRAVITY_START) return;
+
+  const span = Math.max(CAMERA_HARD_LIMIT - CAMERA_GRAVITY_START, 1e-6);
+  const t = THREE.MathUtils.clamp((r - CAMERA_GRAVITY_START) / span, 0, 1);
+  const pull = CAMERA_GRAVITY_MAX_SPEED * t * t * deltaSeconds; // このフレームで原点方向へ戻す距離
+
+  // 引き戻しで重力圏の内側まで行き過ぎないようにし、完全停止ラインも超えさせない
+  let newR = Math.max(r - pull, CAMERA_GRAVITY_START);
+  newR = Math.min(newR, CAMERA_HARD_LIMIT);
+  camera.position.multiplyScalar(newR / r);
+}
+
 // ── レンダーループ ─────────────────────────────
 let labelsShown = false;
 let debugDumpElapsed = 0; // ← デバッグ用: universe.isActive中、一定間隔で自動的にdumpCameraする
@@ -1549,6 +1865,8 @@ function animate() {
   //   実装)にある可能性が高い。intro側で「universe突入後は二度と'home'を返さない」
   //   ことを保証できるなら、そちらで直すのがより根本的な修正になる。
   if (state === 'home' && !universe.isActive && !cameraBusy && !finaleActive) controls.update();
+  // finale以前・ユーザー操作中のみ、星の外側へ出ないよう壁+重力を適用(宇宙ページ/finale中/自動移動中は対象外)
+  if (state === 'home' && !universe.isActive && !cameraBusy && !finaleActive && controls.enabled) applyStarBoundary(delta);
   if (state === 'home' && !universe.isActive && !labelsShown) { labelsShown = true; axisLabels.show(); }
   dialogue.updatePosition();
   // Aスター化した矢のスターダスト更新。矢が非表示の間も、飛んだ後に残った粒が消えるまで毎フレーム呼ぶ。
@@ -1559,9 +1877,16 @@ function animate() {
   try { zWave.update(clock.getElapsedTime()); } catch (err) { console.error('zWave.update failed:', err); }
   try { axes.update(clock.getElapsedTime()); } catch (err) { console.error('axes.update failed:', err); } // 軸ラインの「原点方向へ流れる光」アニメーション
   try { waveScrollController.tickIdleDecay(); } catch (err) { console.error('waveScrollController.tickIdleDecay failed:', err); } // 波面: scrollEnergy(雨量)の減衰と再生速度をゆっくり戻す
+  if (aStar.userData.update) aStar.userData.update(delta); // Aスターの尾(スターダスト)
   updateUniverse(universe, delta, camera); // 宇宙ページの三軸回転(固定軸まわりのカルーセル回転。isActiveがfalseの間は内部で即returnするので無害)
   updateSolarSystem(solarSystem, clock.getElapsedTime()); // 太陽系(召喚=startSolarSystem前は内部で即returnするので無害)
-  updateGalaxy(galaxy, delta); // tripod直下の巨大な銀河の自転(state==='hidden'の間は内部で即returnするので無害)
+  // ★ 2026-10-19 追加(ご指示反映): 「左右ドラッグ時に即カメラが離れて銀河が回って見える」への対応。
+  //   ドラッグ中はカメラの自動回転が止まる(下記)ので、銀河だけ回り続けると相対的に
+  //   銀河が回転して見えてしまう。画角変更(透視図への切り替え)が確定するまでは銀河も止め、
+  //   確定(record.perspectiveActive)した瞬間から回し始める。途中で離して中断した場合は、
+  //   カメラの自動回転と一緒に再開するので相対角度は保たれる。
+  const galaxyFrozenByProjectionDrag = projectionDragActive && !record.perspectiveActive;
+  updateGalaxy(galaxy, galaxyFrozenByProjectionDrag ? 0 : delta); // tripod直下の巨大な銀河の自転(state==='hidden'の間は内部で即returnするので無害)
   // ★ 2026-09-12 追加: 「カメラも銀河と同じ速度で回転させたい」とのご指示の反映。
   //   galaxy.js側のupdateGalaxy()は、通常状態(record.js側のneedleSpinActive以外)では
   //   direction(=GALAXY_ROTATION_DIRECTION) × GALAXY_ANGULAR_SPEED × deltaSecondsぶん
@@ -1641,32 +1966,123 @@ function animate() {
   //   (OVERVIEW_HIDE_SPLIT_DEG)で切り替える。上のshowRecordSideブロックより後に
   //   実行することで、ihSpriteなどの値をこちらが最後に上書きする。
   //   ★ 閾値は仮値です。見た目を見ながら調整してください。
+  // ★ 2026-10-27 追加(ご指示反映): 星(銀河・バルジ・Aスターの尾)の点の大きさもズームに合わせて拡大する。
+  //   フライト中(カメラもfovも動いている間)と俯瞰以外は等倍(1)。フライト後は fov を狭めた分だけ大きくなる。
+  //   uZoomを持つマテリアルは1秒ごとにシーンから集め直す(成長演出などで作り直されても追従するため)。
+  starZoomRefreshTimer -= delta;
+  if (starZoomRefreshTimer <= 0) {
+    starZoomRefreshTimer = 1;
+    starZoomMaterials = [];
+    scene.traverse((o) => {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach((mat) => { if (mat && mat.uniforms && mat.uniforms.uZoom) starZoomMaterials.push(mat); });
+    });
+  }
+  const starZoomFactor = (overviewActive && !overviewFlightInProgress)
+    ? Math.tan(THREE.MathUtils.degToRad(OVERVIEW_FOV_BASE) / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+    : 1;
+  starZoomMaterials.forEach((mat) => { mat.uniforms.uZoom.value = starZoomFactor; });
+  if (!overviewActive) aStar.visible = false; // 俯瞰以外では出さない(俯瞰中はanimateの俯瞰ブロックがtrueにする)
+
   if (overviewActive) {
     const elevationDeg = (overviewScrollCurrent / OVERVIEW_SCROLL_RANGE) * OVERVIEW_ELEVATION_MAX_DEG;
     const hideSolarSystem = elevationDeg < OVERVIEW_HIDE_SPLIT_DEG;
     const hideCarousel = elevationDeg >= OVERVIEW_HIDE_SPLIT_DEG;
 
-    universe.tripodAnchor.visible = !hideCarousel;   // TRIPOD(軸・数式はこの子なので一緒に隠れる)
-    universe.goldenRing.visible = !hideCarousel;     // リング
-    universe.roofParticles.visible = !hideCarousel;  // tripodが残す粒子の軌跡(carousel側の一部)
-    if (universe.ihRevealed) universe.ihSprite.visible = !hideCarousel; // ih
+    // ★ 2026-10-26 追加(ご指示反映): 「銀河(=レコード)に対して回転木馬が大きすぎる。量子世界の
+    //   小ささを見せたい」への対応。最後の俯瞰視点へ移行するフライト(overviewFlightT 0→1。
+    //   OVERVIEW_TRANSITION_DURATION秒、ease付き)に合わせて、carousel一式(universe.carouselRoot)を
+    //   対数補間で 1→CAROUSEL_FINAL_SCALE(上の定数)へ縮小し、ズームで CAROUSEL_ZOOM_SCALE へ戻す。基準点は銀河中心
+    //   (ORBIT_CENTER。回転軸x=z=0の真上なので、木馬は横へ流れず銀河の中心へ寄っていく)。
+    //   フライト後は縮小したまま(overviewFlightT=1)。ティルトシフトの円柱・ihの周回は
+    //   ワールド座標/ローカル座標で追従するので個別対応は不要。
+    //   ★ 再変更: 倍率は「フライトの縮小」×「ズームでの復帰」。フライト後の遠景は CAROUSEL_FINAL_SCALE、
+    //   ズームが進むほど CAROUSEL_ZOOM_SCALE へ(対数補間)戻る。基準点は銀河中心ORBIT_CENTER。
+    const zoomT = overviewZoomProgress();
+    // carouselの大きさは実寸(CAROUSEL_PHYSICAL_SIZE)で一定。ズームしても倍率は変えない(拡大はfovだけが担う)。
+    //   フライト前半(overviewFlightT 0→1)で、その場で 1 → 実寸の倍率へ対数補間で縮む。以後は一定。
+    const carouselScaleFinal = CAROUSEL_PHYSICAL_SIZE / carouselNativeSize;
+    const carouselScale = Math.pow(carouselScaleFinal, overviewFlightT);
+    setCarouselScale(universe, carouselScale, ORBIT_CENTER);
 
-    solarSystem.group.visible = solarSystem.started && !hideSolarSystem; // 太陽系軌道(召喚前=startedがfalseの間は出さない)
+    // すり替え判定(zoomTだけで決める)。縮小フライト中は判定しない(carouselが縮んでいくのを見せるため)。
+    if (!overviewFlightInProgress) {
+      if (carouselShownAsCarousel) {
+        if (zoomT < CAROUSEL_SWAP_ZOOM_HIDE) carouselShownAsCarousel = false;
+      } else if (zoomT >= CAROUSEL_SWAP_ZOOM_SHOW) {
+        carouselShownAsCarousel = true;
+      }
+    }
+
+    // starburstは「縮小したcarouselの代わり」。carouselが見えていない間だけ出し、ズームに合わせて膨らませる。
+    const carouselVisible = !hideCarousel && carouselShownAsCarousel;
+
+    universe.tripodAnchor.visible = carouselVisible;   // TRIPOD(軸・数式はこの子なので一緒に隠れる)
+    universe.goldenRing.visible = carouselVisible;     // リング
+    universe.roofParticles.visible = carouselVisible;  // tripodが残す粒子の軌跡(carousel側の一部)
+    if (universe.ihRevealed) universe.ihSprite.visible = carouselVisible; // ih
+
+    // ★ 2026-10-27 変更(ご指示反映): 太陽系の可視条件。carousel側(仰角8°未満)では「軌道」だけ見せる。
+    //   ・8°以上(バルジ側): 従来どおり太陽系の全体(太陽・惑星・軌道線)。
+    //   ・8°未満(carousel側): CAROUSEL_SIDE_SOLAR が 'orbit' なら軌道線だけ(太陽と惑星は隠す)、
+    //     'planets' なら惑星だけ(太陽と軌道線は隠す)。
+    //   ※ご指示は「惑星だけ恒常表示」。したがって既定は 'planets'(8°未満でも惑星は常に見え、太陽と軌道線だけが8°以上で出る)。
+    solarSystem.group.visible = solarSystem.started;
+    const solarFull = !hideSolarSystem;
+    solarSystem.sunGroup.visible = solarFull || CAROUSEL_SIDE_SOLAR === 'planets'; // 惑星はsunGroupの子
+    solarSystem.sunMesh.visible = solarFull;                                       // 太陽本体は8°以上だけ
+    solarSystem.orbitLine.line.visible = solarFull || CAROUSEL_SIDE_SOLAR === 'orbit';
     // ★ 2026-09-29 追加(ご指示反映): バルジ(record.bulge。galaxy.starsGroupの子)も
     //   太陽系軌道と同じ可視条件(!hideSolarSystem)に揃える。
     if (record.bulge) record.bulge.visible = !hideSolarSystem;
 
-    // ★ 2026-09-29 追加: starburstの星を銀河中心の少し上へ配置する。
-    // ★ 2026-10-11 変更(ご指示反映): 表示するかどうかは、ここでは決めない。「トーンアームを置き終えた
-    //   後に登場」はrecord.js側(record.starburstRevealed)が管理しているので、それに従う
-    //   (以前は俯瞰中は毎フレーム無条件にvisible=trueにしていたため、登場前から見えてしまっていた)。
+    // ★ 2026-10-27 変更(ご指示反映): starburstは縮小carouselと同じ位置(ORBIT_CENTER)に置く
+    //   (「バルジの上」へずらす旧オフセットは削除)。すり替え閾値へ向けて zoomT に応じて膨らみ、
+    //   閾値でcarouselに置き換わる(=starburstの拡大がcarouselへつながる)。
+    // starburstとAスターの大きさは、carouselの実寸(CAROUSEL_PHYSICAL_SIZE)に合わせる(すり替えでも大きさが跳ばない)。
+    //   ただし遠景で実寸が小さすぎて消えないよう、見かけの大きさがSTAR_MIN_PIXELS pxを下回る分だけ底上げする。
+    const viewH = 2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const starWorldSize = Math.max(CAROUSEL_PHYSICAL_SIZE, STAR_MIN_PIXELS / window.innerHeight * viewH);
+    // starburstだけ、ズームに応じて膨らませる(Aスターとcarouselは実寸のまま)。遠景の最小px保証は同じ。
+    const starburstGrowth = Math.pow(window.starburstRatio ?? STARBURST_SWAP_SCALE,
+      THREE.MathUtils.clamp(zoomT / CAROUSEL_SWAP_ZOOM_HIDE, 0, 1));
+    const starburstWorldSize = Math.max(CAROUSEL_PHYSICAL_SIZE * starburstGrowth, STAR_MIN_PIXELS / window.innerHeight * viewH);
     starburstMeshes.forEach((m) => {
-      m.position.copy(ORBIT_CENTER).add(STARBURST_OVERVIEW_OFFSET);
-      m.scale.setScalar(STARBURST_OVERVIEW_SCALE);
-      m.visible = record.starburstRevealed;
+      if (starburstBaseSize === null) { // scale=1のときの広がり(ジオメトリ依存)を一度だけ測る
+        m.scale.setScalar(1); m.updateMatrixWorld(true);
+        const bs = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
+        starburstBaseSize = Math.max(bs.x, bs.y, bs.z) || 1;
+      }
+      m.position.copy(ORBIT_CENTER);
+      m.scale.setScalar(starburstWorldSize / starburstBaseSize);
+      m.visible = !carouselVisible && !hideCarousel;
     });
-    // ★ バルジ中心のAスターも、太陽系軌道・バルジと同じ可視条件(8度未満は隠す)に揃える。
-    if (record.bulgeStar) record.bulgeStar.visible = !hideSolarSystem;
+    // Aスターは starburst と対(starburst=8°未満・carousel側 / Aスター=8°以上・バルジ側)。8°の切り替えは
+    //   バルジ(record.bulge。上で !hideSolarSystem に連動させてある)の子であることで維持される。
+    //   (以前はトーンアーム設置後の登場待ちだったが、starburstと対にするため撤廃し、俯瞰中は常に対象にした)
+    aStar.visible = !hideSolarSystem; // 8°以上だけ(バルジの子でもあるが、尾の粒はscene直下なので明示的にも切る)
+    if (aStar.parent) { // 親(バルジ)のワールド倍率を打ち消して、見かけの直径=starWorldSizeにする(球の直径は1)
+      const ps = aStar.parent.getWorldScale(_tmpScale).x || 1;
+      aStar.scale.setScalar(starWorldSize * (window.aStarRatio ?? A_STAR_VISUAL_RATIO) / ps);
+    }
+
+    // 診断(表示を決めたあとの値を出す): 2秒ごと。実測の画面占有率(measured)が目標(want%)に近いかを見る。
+    carouselLogTimer -= delta;
+    if (carouselLogTimer <= 0) {
+      carouselLogTimer = 2;
+      universe.carouselRoot.updateMatrixWorld(true);
+      const dbox = new THREE.Box3().setFromObject(universe.tripodAnchor);
+      const dsize = dbox.getSize(new THREE.Vector3());
+      const visH = 2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+      console.log('[carousel]', {
+        zoomT: +zoomT.toFixed(3), flightT: +overviewFlightT.toFixed(3),
+        scale: +carouselScale.toExponential(2), rootScale: +universe.carouselRoot.scale.x.toExponential(2),
+        shownCarousel: carouselVisible, tripodVisible: universe.tripodAnchor.visible, starburstShown: starburstMeshes[0] ? starburstMeshes[0].visible : null, aStarShown: aStar.visible, hideCarousel, hideSolarSystem, elevationDeg: +elevationDeg.toFixed(2),
+        nativeSize: +carouselNativeSize.toFixed(1), physicalSize: CAROUSEL_PHYSICAL_SIZE, starburstBase: starburstBaseSize === null ? null : +starburstBaseSize.toFixed(2), starburstScale: starburstMeshes[0] ? +starburstMeshes[0].scale.x.toFixed(3) : null, measuredFracPct: +(Math.max(dsize.x, dsize.y, dsize.z) / visH * 100).toFixed(2),
+        fov: +camera.fov.toFixed(2), camDist: Math.round(camera.position.length()),
+      });
+    }
+    // ★ 2026-10-26 廃止(ご指示反映): バルジ中心のAスター(record.bulgeStar)は廃止した(record.js参照)。
   }
   // ★ 2026-09-11 追加(バグ調査用): 「カメラ設定を変えても最終的な視点が変わらない」の
   //   原因調査のため、universe.isActive中は1秒おきに自動でdumpCameraする(キー操作不要)。
