@@ -17,7 +17,7 @@ import { createPhase3Assets } from './phase3.js';
 
 // ── 星の収束オーケストレーション ──────────────────────
 export const STAR_CONVERGENCE = {
-  psiFinal: { count: 'all', duration: 1 },
+  psiFinal: { count: 'all', duration: 59 },
 };
 
 // starFieldの未割当プールから星を取り出し、symbolKeyの形へ収束させる。
@@ -207,7 +207,9 @@ function buildWalkPaths(frame, depth) {
 //   computeScreenFrame()に一度使うだけ(毎フレーム呼ぶ必要はない)。
 // starField: main.js の createStars() が返すオブジェクト。
 // onEquationComplete: ①(iħ∂ψ/∂t=Ĥψ)が完全に出来上がった瞬間に呼ばれる。
-export function startPhase1({ assembly, existingISprite, camera, starField, onHbarArrived, onEquationComplete }) {
+// axisRedraw: originBurst.js の takeBurstAxisRedraw() の戻り値(任意)。渡すと、バーストで消したZ軸を
+//   Ĥの移動で、X軸をħの移動で描き直す。省略時は従来どおり画面固定の経路を歩くだけ(軸には触らない)。
+export function startPhase1({ assembly, existingISprite, camera, starField, axisRedraw, onHbarArrived, onEquationComplete }) {
   const frame = computeScreenFrame(camera);
   const vertexWorld = existingISprite.getWorldPosition(new THREE.Vector3());
   const depth = vertexWorld.clone().sub(frame.cameraPos).dot(frame.forward); // カメラ→頂点の投影距離
@@ -217,6 +219,32 @@ export function startPhase1({ assembly, existingISprite, camera, starField, onHb
   const hamEnd = walk.hamiltonian.end;
   const hbarStart = walk.hbar.start;
   const hbarEnd = walk.hbar.end;
+
+  // ── 経路は従来どおり(画面固定・手調整した値)。軸は「記号の実位置」に合わせて描く ──
+  // Ĥ/ħの位置(軸に対するオフセット量)は、従来の buildWalkPaths の値のまま変えない。
+  // 軸の描画だけ、記号の位置(上端アンカー点)に最も近い軸上の点まで描く:
+  //   カメラ→記号 の視線と、軸(原点→先端)の直線との最接近点の位置(0=原点, 1=先端)を求める。
+  const zAxisDraw = axisRedraw ? axisRedraw.z : null;
+  const xAxisDraw = axisRedraw ? axisRedraw.x : null;
+  const axisOrigin = axisRedraw ? axisRedraw.origin : new THREE.Vector3(0, 0, 0);
+  function axisParamAtSprite(spritePos, tip) {
+    const r = spritePos.clone().sub(frame.cameraPos); // 視線方向
+    const e = tip.clone().sub(axisOrigin);            // 軸方向(原点→先端)
+    const w0 = frame.cameraPos.clone().sub(axisOrigin);
+    const a = r.dot(r), b = r.dot(e), c = e.dot(e), d = r.dot(w0), f = e.dot(w0);
+    const denom = a * c - b * b;
+    if (Math.abs(denom) < 1e-9) return 0;
+    return THREE.MathUtils.clamp((a * f - b * d) / denom, 0, 1);
+  }
+  // ħがX軸を引くとき、線の先端をħの現在位置より何割ぶん遅らせるか(0=ħの位置まで、大きいほど遅れる)。
+  // 遅れは終点に近づくほど小さくなり、ħが着いた瞬間に線も引き終わる(最後に線が飛ばないように)。
+  const HBAR_AXIS_LAG = 0.12; // 経路全体に対する割合(仮。見ながら調整)
+  function hamPoint(u) {
+    return new THREE.Vector3().lerpVectors(hamStart, hamEnd, u);
+  }
+  function hbarPoint(u) {
+    return new THREE.Vector3().lerpVectors(hbarStart, hbarEnd, u);
+  }
 
   // ── ∂ψ/∂t: 最終位置で静止したまま15秒フェードイン ──
   const derivativeSprite = assembly.sprites.derivative;
@@ -230,9 +258,10 @@ export function startPhase1({ assembly, existingISprite, camera, starField, onHb
     ease: 'power2.in',
   });
 
-  // ── Ĥ: hamStart → hamEnd → hamStart → 数式内の最終位置(ドキュメント⑴・⑶・⑷・⑸) ──
+  // ── 流れ: Ĥが原点→Z軸の先端へ歩く(Z軸を描く) → ħが登場してX軸を先端→原点へ歩く(X軸を描く)
+//         → ħの到着と同時に、Ĥが原点へ戻る → 数式内の最終位置(ドキュメント⑴・⑶・⑷・⑸) ──
   const hamiltonianSprite = assembly.sprites.hamiltonian;
-  hamiltonianSprite.position.copy(hamStart);
+  hamiltonianSprite.position.copy(hamPoint(0));
   hamiltonianSprite.visible = true;
   hamiltonianSprite.material.opacity = 0;
   gsap.to(hamiltonianSprite.material, { opacity: 1, duration: 0.6, ease: 'power1.out' });
@@ -246,16 +275,24 @@ export function startPhase1({ assembly, existingISprite, camera, starField, onHb
     duration: 15, // ∂ψ/∂tのフェードイン(15秒)と同時に到着させる(ドキュメント⑶)
     ease: 'power1.inOut',
     onUpdate: () => {
-      hamiltonianSprite.position.lerpVectors(hamStart, hamEnd, outbound.t);
+      hamiltonianSprite.position.copy(hamPoint(outbound.t));
+      if (zAxisDraw) zAxisDraw.set(axisParamAtSprite(hamiltonianSprite.position, zAxisDraw.tip)); // Ĥの位置まで、Z軸を原点側から描く
     },
     onComplete: () => {
+      if (zAxisDraw) zAxisDraw.set(1); // 描き残しが出ないよう、ここで完全に描き切る
+      startHbarWalk(); // ĤがZ軸の先端に着いたら、ħが登場する
+    },
+  });
+
+  // ħがX軸を描き終えたあと、ĤがZ軸を原点へ戻り、数式内の最終位置へ向かう。
+  function returnHamiltonianToOrigin() {
       const inbound = { t: 0 };
       gsap.to(inbound, {
         t: 1,
         duration: 4, // ドキュメント⑷
         ease: 'power2.inOut',
         onUpdate: () => {
-          hamiltonianSprite.position.lerpVectors(hamEnd, hamStart, inbound.t);
+          hamiltonianSprite.position.copy(hamPoint(1 - inbound.t)); // Z軸を原点へ戻る(軸は描いたまま残す)
         },
         onComplete: () => {
           hamCaptionSeq.stop(); // 軸歩き終了。ここでĤ用セリフも締める
@@ -309,30 +346,38 @@ export function startPhase1({ assembly, existingISprite, camera, starField, onHb
           });
         },
       });
-    },
-  });
+  }
 
-  // ── ħ: hbarStart → hbarEnd、7秒 ──
+  // ── ħ: ĤがZ軸の先端に着いたら登場 → X軸を先端→原点へ、7秒かけて歩く(X軸を描く) ──
   const hbarSprite = assembly.sprites.hbar;
-  hbarSprite.position.copy(hbarStart);
-  hbarSprite.visible = true;
-  hbarSprite.material.opacity = 0;
-  gsap.to(hbarSprite.material, { opacity: 1, duration: 0.6, ease: 'power1.out' });
+  function startHbarWalk() {
+    hbarSprite.position.copy(hbarPoint(0));
+    hbarSprite.visible = true;
+    hbarSprite.material.opacity = 0;
+    gsap.to(hbarSprite.material, { opacity: 1, duration: 0.6, ease: 'power1.out' });
 
-  const travel = { t: 0 };
-  gsap.to(travel, {
-    t: 1,
-    duration: 7,
-    ease: 'power2.inOut',
-    onUpdate: () => {
-      hbarSprite.position.lerpVectors(hbarStart, hbarEnd, travel.t);
-    },
-    onComplete: () => {
-      // ここでħが頂点(=既存の緑i)に重なる。
-      if (onHbarArrived) onHbarArrived({ hbarSprite, existingISprite, vertexWorld });
-      settleIAndHbar({ assembly, existingISprite, hbarSprite, vertexWorld, frame });
-    },
-  });
+    const travel = { t: 0 };
+    gsap.to(travel, {
+      t: 1,
+      duration: 7,
+      ease: 'power2.inOut',
+      onUpdate: () => {
+        hbarSprite.position.copy(hbarPoint(travel.t));
+        if (xAxisDraw) {
+          // ħが少し進んだ「あと」で線が追いつくように、遅らせた進行度の位置まで描く(ħが線を引いている見え方)
+          const lagged = Math.max(0, travel.t - HBAR_AXIS_LAG * (1 - travel.t));
+          xAxisDraw.set(1 - axisParamAtSprite(hbarPoint(lagged), xAxisDraw.tip));
+        }
+      },
+      onComplete: () => {
+        // ここでħが頂点(=既存の緑i)に重なり、X軸が描き終わる。
+        if (xAxisDraw) xAxisDraw.set(1);
+        if (onHbarArrived) onHbarArrived({ hbarSprite, existingISprite, vertexWorld });
+        // iの色変化とiħの最終位置への移動が完全に終わってから、Ĥが原点へ帰還する。
+        settleIAndHbar({ assembly, existingISprite, hbarSprite, vertexWorld, frame, onComplete: returnHamiltonianToOrigin });
+      },
+    });
+  }
 
   return { vertexWorld, frame };
 }
@@ -346,7 +391,7 @@ export function startPhase1({ assembly, existingISprite, camera, starField, onHb
 const I_COLOR_CHANGE_DURATION = 1;
 const I_HBAR_MOVE_DURATION = 3;
 
-function settleIAndHbar({ assembly, existingISprite, hbarSprite, vertexWorld, frame }) {
+function settleIAndHbar({ assembly, existingISprite, hbarSprite, vertexWorld, frame, onComplete }) {
   switchToCenterAnchor(hbarSprite, 'hbar', frame); // 「軸を歩く」区間の終わり(見た目ジャンプなし)
 
   const newISprite = assembly.sprites.i;
@@ -354,7 +399,7 @@ function settleIAndHbar({ assembly, existingISprite, hbarSprite, vertexWorld, fr
   newISprite.visible = true;
   newISprite.material.opacity = 0;
 
-  const tl = gsap.timeline();
+  const tl = gsap.timeline({ onComplete }); // i・ħが最終位置に着いた時点で onComplete
   tl.to(newISprite.material, { opacity: 1, duration: I_COLOR_CHANGE_DURATION, ease: 'power1.inOut' }, 0);
   tl.to(existingISprite.material, { opacity: 0, duration: I_COLOR_CHANGE_DURATION, ease: 'power1.inOut' }, 0);
   tl.call(() => { existingISprite.visible = false; });
