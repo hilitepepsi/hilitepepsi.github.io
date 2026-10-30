@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { AXIS_LENGTH, AXIS_WORLD_DIR } from './config.js';
 import { getAxisStationView } from './config.js';
 import { makeTextSprite } from './axisLabels.js';
+import { makeStarMesh, ORIGIN_STAR_SIZE, ORIGIN_STAR_SPIKE, ORIGIN_STAR_GAIN } from './axes.js';
 import { AXIS_CONTENT } from './data/axisContent.js';
 
 // ── 軸ステーション限定の追加表示(X軸・Y軸) ────────
@@ -14,40 +15,45 @@ import { AXIS_CONTENT } from './data/axisContent.js';
 // Y軸: 終端にクリック可能な点(クリックで"Teddy"を表示) + 軸中央の下に持続タイトル"Nine Stories"
 // X軸: 終端に持続タイトル"The Catcher in the Rye"(点の上に表示) + 原点付近にクリック可能な点(クリックで"Central Park"を表示)
 
-const DOT_RADIUS = 0.35;          // hotspots.jsの星と同じスケール感
-const DOT_HIT_RADIUS = 1.1;       // ← クリック判定専用の当たり判定半径(見た目のDOT_RADIUSより広い)。
-                                   //   小さな点(半径0.35)を画面上で正確にクリックするのは元々シビアで、
-                                   //   特にZ軸は波動関数(zAxisWave)の描画が点の位置に重なる瞬間があり
-                                   //   狙いづらいため、見た目はそのままにクリックできる範囲だけ広げる。
-export const DOT_COLOR = 0x4fd6ff; // ← bloomThreshold(0.35)を超える明るい青。軸(0xbfe9ff)より彩度を上げて発光が映えるようにした
+const DOT_HIT_RADIUS = 1.1;       // ← クリック判定専用の当たり判定半径。見た目(スパイク星)は数pxと小さく、
+                                   //   特にZ軸は波動関数(zAxisWave)の描画が重なる瞬間があり狙いづらいため、広めに取る。
+export const DOT_COLOR = 0x2a6cff; // ← 各点(終端・原点)のスパイク星の色。濃い青(以前は水色寄りの0x4fd6ff)。Bloomは除外済みなので星自身の明るさで光る
                                    //   export: 星座風画像(axisConstellationOverlay.js)でTeddyの点と同じ発色を使うため
 const TITLE_OFFSET = 2.6;         // 軸中央/終端点から、タイトルをどれだけ離すか
+// ── 終端の点の「極小スパイク」(axes_star_lab.html の B案) ──
+// 軸本体(axes.js)の終端には星を置かない。ステーション滞在中に出る終端の「点」は、
+// 球ではなく、画面ピクセル径の小さな星+ごく短い回折スパイクそのもので表す(原点の一等星より圧倒的に小さい)。
+const TIP_STAR_SIZE = 2.5;        // 星の芯(CSS px)
+const TIP_STAR_SPIKE = 28;        // 終端のスパイク長(CSS px)。以前は14の倍。0にすればスパイク無し
+const TIP_STAR_CORE = 0x8cbcff;   // 星の芯の色(DOT_COLORより明るい青。白に寄せすぎず濃い青を保つ)
+const TIP_STAR_GAIN = 1;
 
-// 「点」はhotspots.jsの星と同じく、明るい色のシンプルな球にする。
-// bloomパス(bloomThreshold=0.35)が明るい色をそのまま光らせてくれるので、
-// 特別なシェーダーを使わずMeshBasicMaterialの色だけで「発光する点」に見える。
-//
-// raiseAboveOthers: trueにすると、他の透明/半透明オブジェクト(Z軸の波動関数など)より
-// 必ず手前に描画されるようにする(depthTest無効化+renderOrderを上げる)。
-// 波動関数が視覚的に点を覆い隠して見失わせる問題への対処で、今のところZ軸の点だけに使う。
-function makeDot({ raiseAboveOthers = false } = {}) {
-  const material = new THREE.MeshBasicMaterial({ color: DOT_COLOR });
-  if (raiseAboveOthers) material.depthTest = false;
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(DOT_RADIUS, 16, 16), material);
-  if (raiseAboveOthers) mesh.renderOrder = 10;
+// 「点」は球ではなく、スパイク星(axes.jsのmakeStarMesh)で表す。
+// 終端(tipStar=true)だけが見た目を持ち、原点側は当たり判定のみ。Bloomには頼らない(main.jsで除外済み)。
+function makeDot({ tipStar = false } = {}) {
+  // ★ 球(SphereGeometry+発光色)は廃止。見た目は「スパイク星」(tipStar=true の終端のみ)で、
+  //   原点側の点は見た目なし(原点には axes.js の一等星があるので、ここは当たり判定だけ持つ)。
+  //   ルートは空のGroup。位置・visible・userDataは従来どおり呼び出し側が設定する。
+  const dot = new THREE.Group();
 
-  // 見た目のサイズ(DOT_RADIUS)はそのまま、クリック判定だけ広げるための当たり判定球を子として追加する。
-  // ※ material.visible=false での「見えないヒット判定用メッシュ」は、iHitのコメントにある通り
-  //   環境によってraycastが拾わないことがあるため使わない。ここもyzPanel/iHitと同じ実績のある方式
-  //   (visible=trueのまま、ほぼ完全に透明=opacity限りなく0)にする。
+  // クリック判定専用の当たり判定球。material.visible=false だと環境によってraycastが拾わないことがあるため、
+  // yzPanel/iHitと同じ実績のある方式(visible=trueのまま、ほぼ完全に透明=opacity限りなく0)にする。
   // main.js側は raycaster.intersectObject(dot, true) で再帰的に判定し、この子ごとヒット扱いにする。
   const hitArea = new THREE.Mesh(
     new THREE.SphereGeometry(DOT_HIT_RADIUS, 12, 12),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.001, depthWrite: false, depthTest: false })
   );
-  mesh.add(hitArea);
+  dot.add(hitArea);
 
-  return mesh;
+  if (tipStar) {
+    const star = makeStarMesh({ color: DOT_COLOR, coreColor: TIP_STAR_CORE, size: TIP_STAR_SIZE, spike: TIP_STAR_SPIKE, gain: TIP_STAR_GAIN });
+    // 波動関数(zAxisWave)など他の半透明物に隠れないよう、深度テストは切って最前面に描く
+    star.material.depthTest = false;
+    star.renderOrder = 11;
+    dot.add(star);
+  }
+
+  return dot;
 }
 
 // 持続タイトル(Nine Stories / The Catcher in the Rye)用のテキスト設定。
@@ -93,10 +99,24 @@ export function createAxisStationOverlay(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
+  // ── 原点の一等星(X/Y/Zステーション共通) ──
+  // 終端の点と同じ扱い: いずれかの軸ステーションに到達している間だけ出し、離れたら消す。
+  // 3つのステーションで共有するので、どの軸が「滞在中」かを集合で数えて、1つでもあれば表示する。
+  const originStar = makeStarMesh({ color: DOT_COLOR, coreColor: TIP_STAR_CORE, size: ORIGIN_STAR_SIZE, spike: ORIGIN_STAR_SPIKE, gain: ORIGIN_STAR_GAIN });
+  originStar.material.depthTest = false; // 原点に重なる他の物(波動関数など)に隠れさせない
+  originStar.renderOrder = 11;
+  originStar.visible = false;
+  group.add(originStar);
+  const originUsers = new Set();
+  function setOriginStar(axis, on) {
+    if (on) originUsers.add(axis); else originUsers.delete(axis);
+    originStar.visible = originUsers.size > 0;
+  }
+
   // ── Y軸 ──────────────────────────────────────
   const yStationView = getAxisStationView(AXIS_WORLD_DIR.Y, AXIS_LENGTH);
 
-  const yEndDot = makeDot();
+  const yEndDot = makeDot({ tipStar: true });
   yEndDot.position.copy(AXIS_WORLD_DIR.Y.clone().normalize().multiplyScalar(AXIS_LENGTH));
   yEndDot.userData.axisName = 'Y';
   yEndDot.userData.contentKey = 'end';
@@ -164,12 +184,14 @@ export function createAxisStationOverlay(scene) {
     yEndDot.visible = true;
     yOriginDot.visible = true;
     yTitleSprite.visible = true;
+    setOriginStar('Y', true);
     iHit.visible = true; // ← 隠しiボタンの当たり判定を有効化(yzPanelのsetActive(true)と同じ考え方)
   }
   function hideY() {
     yEndDot.visible = false;
     yOriginDot.visible = false;
     yTitleSprite.visible = false;
+    setOriginStar('Y', false);
     iHit.visible = false; // ← 当たり判定ごと無効化
     // Yステーションを離れるときは、隠しiボタンも即座に(アニメ無しで)消しておく
     gsap.killTweensOf(iSprite.material);
@@ -182,7 +204,7 @@ export function createAxisStationOverlay(scene) {
   const xStationView = getAxisStationView(AXIS_WORLD_DIR.X, AXIS_LENGTH);
 
   // 終端の点(持続表示。クリック操作は無し)
-  const xEndDot = makeDot();
+  const xEndDot = makeDot({ tipStar: true });
   xEndDot.position.copy(AXIS_WORLD_DIR.X.clone().normalize().multiplyScalar(AXIS_LENGTH));
   xEndDot.userData.axisName = 'X';
   xEndDot.userData.contentKey = 'end'; // ← Yのend(Teddy)と同じ仕組みでクリック対応(main.js側)
@@ -213,11 +235,13 @@ export function createAxisStationOverlay(scene) {
     xEndDot.visible = true;
     xTitleSprite.visible = true;
     xOriginDot.visible = true;
+    setOriginStar('X', true);
   }
   function hideX() {
     xEndDot.visible = false;
     xTitleSprite.visible = false;
     xOriginDot.visible = false;
+    setOriginStar('X', false);
   }
 
   // ── Z軸 ──────────────────────────────────────
@@ -226,14 +250,14 @@ export function createAxisStationOverlay(scene) {
   // (Y軸の"Nine Stories"と同じ、軸中央+ステーションup方向オフセットの置き方)。
   const zStationView = getAxisStationView(AXIS_WORLD_DIR.Z, AXIS_LENGTH);
 
-  const zEndDot = makeDot({ raiseAboveOthers: true }); // ← 波動関数(zAxisWave)より必ず手前に描画する
+  const zEndDot = makeDot({ tipStar: true }); // ← 波動関数(zAxisWave)より必ず手前に描画する
   zEndDot.position.copy(AXIS_WORLD_DIR.Z.clone().normalize().multiplyScalar(AXIS_LENGTH));
   zEndDot.userData.axisName = 'Z';
   zEndDot.userData.contentKey = 'end';
   zEndDot.visible = false;
   group.add(zEndDot);
 
-  const zOriginDot = makeDot({ raiseAboveOthers: true }); // ← 同上
+  const zOriginDot = makeDot(); // ← 同上
   zOriginDot.position.set(0, 0, 0);
   zOriginDot.userData.axisName = 'Z';
   zOriginDot.userData.contentKey = 'origin';
@@ -254,15 +278,17 @@ export function createAxisStationOverlay(scene) {
     zEndDot.visible = true;
     zOriginDot.visible = true;
     zTitleSprite.visible = true;
+    setOriginStar('Z', true);
   }
   function hideZ() {
     zEndDot.visible = false;
     zOriginDot.visible = false;
     zTitleSprite.visible = false;
+    setOriginStar('Z', false);
   }
 
   return {
-    group,
+    group, originStar,
     yEndDot, yOriginDot, yTitleSprite, showY, hideY,
     iHit, iSprite, setIHovered, isIHovered, // ← 隠しiボタン(Y軸限定)
     xEndDot, xTitleSprite, xOriginDot, showX, hideX,
