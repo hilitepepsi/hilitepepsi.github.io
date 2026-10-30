@@ -83,6 +83,28 @@ export const UNIVERSE_CAMERA_POS = UNIVERSE_CAMERA_TARGET.clone().add(
 //   処理が復活したときに2箇所で値がズレるバグを防ぐため(仮値。見た目を見ながら調整してください)。
 export const PHASE_SWAP_END = 0.5;
 
+// ══════════════════════════════════════════════════════════════
+// ── 星空の外殻と、カメラの「見えない壁+重力」(finale以前のホーム用) ──────
+//   2026-10-21 追加(ご指示反映): 「finale以前では、カメラが星より外側に行けないように
+//   したい。完全に止まる限界範囲を作り、途中で原点方向の重力を与える感じ」への対応。
+//   星はstars.jsで原点中心の球殻(内径STAR_INNER_RADIUS、厚みSTAR_SHELL_THICKNESS)に
+//   配置される。外殻の半径(=一番外側の星)はSTAR_OUTER_RADIUS。
+//     ・距離 < CAMERA_GRAVITY_START … 何も起きない(自由に動ける)
+//     ・CAMERA_GRAVITY_START〜CAMERA_HARD_LIMIT … 原点方向へ引く「重力」が
+//       外へ行くほど強くなる(0 → CAMERA_GRAVITY_MAX_SPEED[単位/秒]。二次カーブ)
+//     ・CAMERA_HARD_LIMIT … ここより外へは絶対に出られない(完全停止)
+//   HARD_LIMITは星の最外殻より少し内側(余白MARGIN)にしてあるので、星の外側の
+//   「何もない空間」は一切見えない。値はすべて仮値。見ながら調整してください。
+// ══════════════════════════════════════════════════════════════
+export const STAR_INNER_RADIUS    = 150;
+export const STAR_SHELL_THICKNESS = 350;
+export const STAR_OUTER_RADIUS    = STAR_INNER_RADIUS + STAR_SHELL_THICKNESS; // =500
+
+const CAMERA_LIMIT_MARGIN = 10;
+export const CAMERA_HARD_LIMIT       = STAR_OUTER_RADIUS - CAMERA_LIMIT_MARGIN; // 完全に止まる限界(原点からの距離)
+export const CAMERA_GRAVITY_START    = 420; // ここから重力が効き始める(ARCHER_POSの距離≈381より外側にしてある)
+export const CAMERA_GRAVITY_MAX_SPEED = 220; // 限界ぎりぎりでの引き戻し速度[単位/秒]
+
 export const AXIS_STATION = {
   duration: 2.2,
 };
