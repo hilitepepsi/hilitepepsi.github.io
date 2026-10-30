@@ -5,7 +5,7 @@
 
 // ── 星の収束(ψが形作られていく間)に同期して表示するセリフ(画面右) ────────
 const CONVERGENCE_QUOTES = ['Out of this quietness, and entirely in key with it, Seymour called to me.','It came as a pleasant shock that there was a third person in the universe,','and to this feeling was added the justness of its being too.',
-'With the canopy lights behind him, his face was shadowed, dimmed out.',{text: 'From the way he was balanced on the curb edge, from the position of his hands, from — well,', duration: 8},{ text:'the quantity x itself,', duration: 5 },{ text:'I knew as well then as I know now that he was immensely conscious himself of the magic hour of the day.', duration: 13,},' '
+'With the canopy lights behind him, his face was shadowed, dimmed out.',{text: 'From the way he was balanced on the curb edge, from the position of his hands, from — well,', duration: 8},{ text:'the quantity x itself,', duration: 5 },{ text:'I knew as well then as I know now that he was immensely conscious himself of', duration:10,},{ text:'the magic hour of the day.', duration: 6,},
 ];
 const CONVERGENCE_QUOTE_INTERVAL = 6.0; // デフォルトの表示間隔(秒)。個別に変えたい場合は下記参照。
 
