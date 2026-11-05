@@ -346,13 +346,13 @@ export function createSceneSetup() {
   roundBloomAddPass.needsSwap = true;
 
   // ── 波面加工(雨紋+屈折のみ)。mixPass(Bloom合成済み画像)を受け取って
-  //    さらに歪めるだけなので、Bloomの仕組み・phase3.js側には一切影響しない。
+  //    さらに歪めるだけなので、Bloomの仕組み・phase2.js側には一切影響しない。
   //    OutputPass(トーンマッピング・色空間変換)の直前に置くことで、
   //    「歪めた結果」に対して最後に正しく色空間変換がかかるようにしている。
   const wavePass = new RippleRefractionPass();
   wavePass.enabled = false;
-  // ★ ご指示反映: 波面加工はphase3(②③④展開)の間だけ適用する。既定は無効にしておき、
-  //   main.js側でPhase3開始/終了のタイミングでenabled切り替え+reset()を行う。
+  // ★ ご指示反映: 波面加工はphase2(②③④展開)の間だけ適用する。既定は無効にしておき、
+  //   main.js側でPhase2開始/終了のタイミングでenabled切り替え+reset()を行う。
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
