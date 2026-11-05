@@ -28,12 +28,12 @@ import { getAxisStationView, flyToAxisStation, UNIVERSE_CAMERA_POS, UNIVERSE_CAM
 import { createAxisStationOverlay } from './axisStationOverlay.js';
 import { createAxisConstellationOverlay } from './axisConstellationOverlay.js';
 import { AXIS_CONTENT } from './data/axisContent.js';
-import { createFinale, runFinale, handleIconClick } from './finale.js';
-import { createEquationAssembly, startPhase1, zoomToEquation, startPhase3 } from './equationAssembly.js';
+import { createTrigger, runTrigger, handleIconClick } from './trigger.js';
+import { createEquationAssembly, startPhase1, zoomToEquation, startPhase2 } from './equationAssembly.js';
 import { playOriginBurst, takeBurstAxisRedraw } from './originBurst.js';
 import { createUniverse, enterUniverse, toggleUniverseEquation, updateUniverse, updateEquationHoverByPointer, revealTripodRing, liftTripod, startTripodRoofPulse, createUniverseProjectionMixer, unlockIh, setTripodAngularSpeed, setCarouselScale } from './universe.js';
 import { createSolarSystem, updateSolarSystem, ORBIT_CENTER } from './solarSystem.js';
-import { createGalaxy, updateGalaxy, revealGalaxy, setGalaxyArmEmphasis, setGalaxyDifferentialRotation, ANGULAR_SPEED as GALAXY_ANGULAR_SPEED, ROTATION_DIRECTION as GALAXY_ROTATION_DIRECTION } from './galaxy.js';
+import { createGalaxy, updateGalaxy, revealGalaxy, setGalaxyArmEmphasis, setGalaxyDifferentialRotation, ANGULAR_SPEED as GALAXY_ANGULAR_SPEED } from './galaxy.js';
 import { createTripodRingSwap, updateTripodRingSwap, finishTripodRingSwap } from './tripodRingSwap.js';
 import { createTiltShift } from './tiltShift.js';
 import { createAStar } from './aStar.js';
@@ -47,13 +47,13 @@ const BILLIARD_CAMERA_POS = new THREE.Vector3(AXIS_LENGTH / 2, -AXIS_LENGTH / 2,
 const BILLIARD_CAMERA_TARGET = new THREE.Vector3(AXIS_LENGTH / 2, AXIS_LENGTH / 2, 0); // パネル中央(=9,9,0)
 const BILLIARD_TRANSITION_DURATION = 1.3; // yzPanel.js のRIPPLE_SPEEDと揃えている(パネル対角線を走り抜ける時間)
 
-const SAGITTARIUS_MESSAGE = { text: 'Shirley you said you were sagitarius\nbut your only taurus bring your skates\nwhen you come over to my house', work: 'The Catcher in the Rye'}
+const SAGITTARIUS_MESSAGE = { text: '*Shirley you said you were sagitarius\nbut your only taurus bring your skates\nwhen you come over to my house*', work: 'The Catcher in the Rye'}
 
 // ★ 追加: 宇宙ページのtripod(universe.axesGroup)先端に付いているX/Y/Zラベルをクリックした
 //   ときに表示するメッセージ。text/workともに後で実際の文言に差し替える(今は空のプレースホルダー)。
 const AXIS_TIP_MESSAGES = {
   X: { text: 'Gimme the pieces.', work: 'The Catcher in the Rye' },
-  Y: { text: 'Life is a gift horse in my opinion', work: 'Teddy' },
+  Y: { text: 'Life is a gift horse in my opinion.', work: 'Teddy' },
   Z: { text: 'When the horse arrived, it turned out indeed to be a superlative animal.', work: 'Raise High the Roof Beam, Carpenters' },
 };
 
@@ -159,20 +159,20 @@ const STAR_MIN_PIXELS = 3; // 仮値。Aスター/starburstの最小の見かけ
 //   なる遠景では、銀河の星(1〜数pxの点)と同じく「見つけられる点」として最低これだけは見せる。ズームして実寸が
 //   これを超えたら、実寸(=carouselの大きさ)どおりになる。
 
-const finale = createFinale(scene);
-let finaleActive = false; // フィナーレ開始後はcameraBusy/controlsとは別に、全インタラクションを止める
+const trigger = createTrigger(scene);
+let triggerActive = false; // TRIGGER開始後はcameraBusy/controlsとは別に、全インタラクションを止める
 // ⚠ iアイコンはtravelToOrigin途中(p.t>0.85)でフェードイン・クリック判定ONになるが、
-// その時点ではまだカメラはtravelToDestの途中(FINALE_DESTへ移動中)のことがある。
+// その時点ではまだカメラはtravelToDestの途中(TRIGGER_DESTへ移動中)のことがある。
 // startPhase1はcomputeScreenFrame(camera)でその瞬間のカメラ姿勢を確定させてしまうため、
 // カメラが完全に静止する前にクリックされると、以後の記号・星の配置が全部
 // 「中途半端な姿勢」を基準にしてズレる。これを防ぐため、travelToDest完了(onDone)まで
 // iクリックの処理自体を保留するフラグ。
-let finaleCameraSettled = false;
+let triggerCameraSettled = false;
 
-// ── Phase3(数式クリックでのズーム・②③④展開)関連の状態 ──
+// ── Phase2(数式クリックでのズーム・②③④展開)関連の状態 ──
 let equationComplete = false; // ①(iħ∂ψ/∂t=Ĥψ)が完成した瞬間にtrueへ
 let equationZoomed = false;   // 数式へズームイン済みか
-let equationVertexWorld = null; // ズーム・Phase3配置計算に使う頂点(=緑iだった場所)のワールド座標
+let equationVertexWorld = null; // ズーム・Phase2配置計算に使う頂点(=緑iだった場所)のワールド座標
 let equationFrame = null;       // computeScreenFrame(camera)のスナップショット(ズーム時のカメラ姿勢基準)
 
 const { state: bananaState, triggerShatter } = createBanana(scene);
@@ -203,8 +203,9 @@ Object.values(equationAssembly.sprites).forEach((sprite) => excludeFromBloom(spr
 const _childrenBeforeAxes = new Set(scene.children);
 const axes = createAxes(scene);
 scene.children.filter((c) => !_childrenBeforeAxes.has(c)).forEach((c) => excludeFromBloom(c));
-const universe = createUniverse(scene); // ← Phase3以降、画面クリックで遷移する「宇宙ページ」(星なし・回転する三軸+方程式画像)
+const universe = createUniverse(scene); // ← Phase2以降、画面クリックで遷移する「宇宙ページ」(星なし・回転する三軸+方程式画像)
 // ★ 2026-10-28 追加: 宇宙ページのtripod軸(universe.axesGroup)もBloom対象から外す。
+// 数式のグローはuniverse.js側でテクスチャに焼き込む(EQUATION_GLOW)ため、Bloomは従来どおり除外のまま(二重がけ防止)。
 if (universe.axesGroup) excludeFromBloom(universe.axesGroup);
 // ★ 2026-09-17 追加(ご指摘反映): 「銀河俯瞰時、レコード(=universe.goldenRing)が
 //   画面上で小さく見えるとき(望遠鏡モードの既定fov・ドラッグでズームしていない状態)
@@ -1002,7 +1003,11 @@ const axisStationOverlay = createAxisStationOverlay(scene); // X/Y軸ステー�
 // ★ 追加: オーバーレイ(終端の点+極小スパイクの星+タイトル)もBloom対象から外す。
 //   UnrealBloomPassが小さく硬い点を丸い塊に膨らませ、終端のスパイクを埋もれさせていたため。
 //   (点・星は子なので、groupを渡せばまとめて除外される)
-excludeFromBloom(axisStationOverlay.group);
+// ★ 2026-10-30 変更: 隠しiボタンの見た目(iSprite)だけはBloomを「かけ直す」ため、group丸ごとではなく
+//   iSprite以外の子を個別に除外する。
+axisStationOverlay.group.children
+  .filter((c) => c !== axisStationOverlay.iSprite)
+  .forEach((c) => excludeFromBloom(c));
 const axisConstellationOverlay = createAxisConstellationOverlay(scene); // Teddy/Catcherクリック時の星座風画像(現時点ではTeddyのみ画像あり)
 const yzPanel = createYZPanel(scene); // Y軸ステーション時、YZ平面(概念Y全長×概念Z全長)に浮かぶ反射・透明パネル
 const nineBall = createNineBall({
@@ -1065,6 +1070,10 @@ const intro = createIntroSequence({
 // ── クリック処理 ───────────────────────────────
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+// ★ 追加: 緑の星(trigger.star)の上だけキャッチャーミット(lefthand.cur)カーソルにする。
+//   .curは中にホットスポット(指定位置)を持っているので、url()の後ろに座標は書かない。
+//   画像が読めないときは 'pointer' にフォールバックする。
+const TRIGGER_STAR_CURSOR = "url('.//assets/cur/leftglove.cur'), pointer";
 let cameraBusy = false; // 軸間を移動中は多重クリックを無視する
 let panelTransitioning = false;
 let currentAxisView = null; // 現在到達しているステーションの軸名('X'/'Y'/'Z'/null=まだどこにも到達していない)
@@ -1125,7 +1134,7 @@ function hideZOverlay() {
   dialogue.hide(); // 原点/終端の点のセリフを表示中だった場合、10秒タイマーでの誤復帰を防ぐため即閉じる
   // ※ ここでzWave.reset()は呼ばない。hideZOverlay()は「空白クリックで点/タイトル表示だけ戻す」ケースでも
   //   呼ばれるため、カメラがZステーションに留まったままでも、らせんまで消えてしまっていた(意図しない挙動)。
-  //   らせんを消すのは「別の軸へ実際に移動するとき」(下のaxisHit処理)とPhase3突入時のみにする。
+  //   らせんを消すのは「別の軸へ実際に移動するとき」(下のaxisHit処理)とPhase2突入時のみにする。
   zOverlayActive = false;
 }
 
@@ -1144,7 +1153,7 @@ function triggerZWave() {
   });
 }
 
-// ── Phase3: 数式ズーム時、軸まわりの表示を消す ──
+// ── Phase2: 数式ズーム時、軸まわりの表示を消す ──
 // axisLabels/axisStationOverlayはSpriteのopacityを掴めるので滑らかにフェードできるが、
 // axes(軸ライン本体)・zWave(らせん)は現状fadeOut()のようなメソッドを持たないため、
 // 「あれば呼ぶ」という保険付きの実装にしてある(typeof判定)。
@@ -1168,7 +1177,7 @@ function fadeOutAxisVisuals(duration = 1.2) {
 
   if (typeof axes.fadeOut === 'function') axes.fadeOut(duration);
   // zWaveにfadeOut()は実装されていない(常にこのtypeofチェックがfalseになり無視されていた)。
-  // Phase3以降で万一まだ再生中でも確実に消えるよう、reset()で強制停止する(フェードなし・即座に非表示)。
+  // Phase2以降で万一まだ再生中でも確実に消えるよう、reset()で強制停止する(フェードなし・即座に非表示)。
   zWave.reset();
 }
 
@@ -1198,7 +1207,7 @@ function onYZPanelClick() {
   });
 }
 // ── シーン切り替え時の「継ぎ目隠し」用オーバーレイ ──────────────
-// 数式Phase3→宇宙ページの遷移で、カメラが瞬時にジャンプする一方
+// 数式Phase2→宇宙ページの遷移で、カメラが瞬時にジャンプする一方
 // 旧スプライトのフェードアウトが1.2秒かけて続いていたため、新カメラのフレームの中に
 // 旧数式の残骸が一瞬映り込んでいた(カメラのカットとフェードのタイミングがズレていたのが原因)。
 // three.js側で全部のタイミングを丁寧に揃える代わりに、DOM側の単純な黒オーバーレイで
@@ -1275,21 +1284,21 @@ renderer.domElement.addEventListener('click', (e) => {
   //   一切受け付けない(record.js側の二重発火防止フラグをそのまま流用している)。
   if (record.coronationStarted && !recordSequenceDone) return;
 
-  // フィナーレ中でも「i」アイコンだけは特別にクリックを許可する
-  // (ただし、カメラがFINALE_DESTに完全に静止してから。理由は finaleCameraSettled の定義部を参照)
-  if (finaleActive) {
-    if (!finaleCameraSettled) return; // カメラがまだ動いている間はiクリックを一切処理しない
+  // trigger中でも「i」アイコンだけは特別にクリックを許可する
+  // (ただし、カメラがTRIGGER_DESTに完全に静止してから。理由は triggerCameraSettled の定義部を参照)
+  if (triggerActive) {
+    if (!triggerCameraSettled) return; // カメラがまだ動いている間はiクリックを一切処理しない
 
     pointer.x = (e.clientX / innerWidth) * 2 - 1;
     pointer.y = -(e.clientY / innerHeight) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
 
-    const finaleIconHit = finale.iHitArea.visible
-      ? raycaster.intersectObject(finale.iHitArea)[0]
+    const triggerIconHit = trigger.iHitArea.visible
+      ? raycaster.intersectObject(trigger.iHitArea)[0]
       : null;
-    // ①完成後、数式そのもの(表示中のシンボルスプライト)をクリックしたらズーム→Phase3。
+    // ①完成後、数式そのもの(表示中のシンボルスプライト)をクリックしたらズーム→Phase2。
     if (equationComplete) {
-      const p3 = equationAssembly.phase3;
+      const p3 = equationAssembly.phase2;
 
       if (universe.isActive) {
         // ── 宇宙ページ内のクリック判定 ──────────────────
@@ -1377,19 +1386,19 @@ renderer.domElement.addEventListener('click', (e) => {
             duration: 1.6,
             onComplete: () => {
               // ズーム完了後の最初のクリックで②③④の自動展開を開始する
-              // ★ ご指示反映: 波面加工(雨紋+屈折)はphase3の間だけ適用する。
+              // ★ ご指示反映: 波面加工(雨紋+屈折)はphase2の間だけ適用する。
               //   無効化していた間に凍結していた古い波が急に見えないよう、
               //   有効化する瞬間にreset()してからenabled=trueにする。
               wavePass.reset(renderer);
               wavePass.enabled = true;
               waveScrollController.reset(); // 前回分のemaSpeed/scrollEnergyを持ち越さないよう念のため
-              startPhase3({ assembly: equationAssembly, camera, onComplete: () => {
-                console.log('Phase3(②③④)展開完了');
+              startPhase2({ assembly: equationAssembly, camera, onComplete: () => {
+                console.log('Phase2(②③④)展開完了');
               } });
             },
           });
         } else if (p3 && p3.stage === 'stage4' && !p3.busy) {
-          // Phase3(④)到達後の追加クリックで「宇宙ページ」へ遷移する(1回目のみ。以降はuniverse.isActiveの分岐へ)
+          // Phase2(④)到達後の追加クリックで「宇宙ページ」へ遷移する(1回目のみ。以降はuniverse.isActiveの分岐へ)
           // 旧シーンのフェードアウトとカメラのジャンプ(enterUniverse内で瞬時に発生)の
           // タイミングがズレて残像が見えていたため、黒オーバーレイで一瞬隠している間に
           // 旧要素を即座に消灯し、カメラも切り替える。
@@ -1428,16 +1437,16 @@ renderer.domElement.addEventListener('click', (e) => {
               //   ここで非表示にする。
               hotspotMeshes.forEach((m) => { m.visible = false; });
               archer.visible = false;
-              // ★ ご指示反映: 波面加工はphase3専用なので、宇宙ページへ移る瞬間に無効化する。
+              // ★ ご指示反映: 波面加工はphase2専用なので、宇宙ページへ移る瞬間に無効化する。
               wavePass.enabled = false;
               // ★重要: スクロール連動でgsap.globalTimeline.timeScale()を動かしていたため、
-              //   ここで明示的に1へ戻す。戻さないと、phase3終了時点でたまたま無操作が
+              //   ここで明示的に1へ戻す。戻さないと、phase2終了時点でたまたま無操作が
               //   続いていた場合にtimeScaleがidleTimeScale(0.05=5%速度)近くまで
               //   落ちたまま残ってしまい、宇宙ページ以降のアニメーション全体が
               //   異常にゆっくりになってしまう(実際に発生していた不具合)。
               waveScrollController.reset();
               // ★ 2026-09-11 追加(バグ調査): 「カメラの設定を変えても最終的な視点が変わらない」
-              //   という報告への対応。Phase3(zoomToEquation/startPhase3)がcamera.position/
+              //   という報告への対応。Phase2(zoomToEquation/startPhase2)がcamera.position/
               //   quaternionをGSAPのtweenで動かしているが、universeページへ遷移する際にその
               //   tweenを明示的に止めていなかった。もしこのtweenが(ループ演出などで)動き
               //   続けたままだと、毎フレームcamera.position/向きを強制的に上書きし続け、
@@ -1450,7 +1459,7 @@ renderer.domElement.addEventListener('click', (e) => {
               dumpCamera('onMid, before enterUniverse'); // ← デバッグ: killTweensOf直後の状態を記録
               // ★ 2026-09-11 バグ修正: 以前はsetProjectionMix(0)をenterUniverseのonComplete
               //   (約1秒後、黒オーバーレイが晴れてコンテンツが見え始めた後)で呼んでいたため、
-              //   Phase3までの通常の透視図から疑似正射影へ切り替わる瞬間の見た目の変化(視野角の
+              //   Phase2までの通常の透視図から疑似正射影へ切り替わる瞬間の見た目の変化(視野角の
               //   急な変化)がユーザーに丸見えになってしまっていた。このブロック(onMid。まだ
               //   画面が黒オーバーレイの下に隠れている)でカメラのジャンプと同時に呼ぶことで、
               //   他の要素(旧シーンの消灯・カメラのジャンプ)と同様、切り替わりの瞬間自体を
@@ -1483,7 +1492,7 @@ renderer.domElement.addEventListener('click', (e) => {
                   //   (以前は銀河出現と同時に早々と表示していた)。
                   // universe開始時点のセリフ差し替え。
                   const axisHint2 = document.getElementById('axisHint');
-                  if (axisHint2) axisHint2.textContent = 'What is the sound of two hands clapping?';
+                  if (axisHint2) axisHint2.textContent = 'Beauty says nothing at all.';
                   dumpCamera('enterUniverse onComplete'); // ← デバッグ: この時点の実際のカメラ状態を記録
                   console.log('宇宙ページへ遷移完了');
                 },
@@ -1495,15 +1504,15 @@ renderer.domElement.addEventListener('click', (e) => {
       }
     }
 
-    if (finaleIconHit) {
-      finale.star.visible = false; // ★ 緑の星を消す(以後finale側で再表示されないため、この1回でよい)
+    if (triggerIconHit) {
+      trigger.star.visible = false; // ★ 緑の星を消す(以後trigger側で再表示されないため、この1回でよい)
       // 宇宙ページ用のセリフへ差し替える(index.html側の#axisHintは
       // "What is the sound of the universe?"のまま固定表示されているだけなので、
       // ここでtextContentを書き換えて切り替える)。
       const axisHint = document.getElementById('axisHint');
-      if (axisHint) axisHint.textContent = 'Beauty says nothing at all.';
+      if (axisHint) axisHint.textContent = 'What is the sound of two hands clapping?';
       handleIconClick({
-        finale,
+        trigger,
         onNextPhase: () => {
           // まず原点で「黄色い輝点(十字フレア)+青い同心円」を一度だけ再生し、
           // それが完全に終わってからĤ(=startPhase1本体)を登場させる。
@@ -1515,7 +1524,7 @@ renderer.domElement.addEventListener('click', (e) => {
               const result = startPhase1({
                 axisRedraw: takeBurstAxisRedraw(), // ← バーストで消したZ軸・X軸を、Ĥ・ħの移動で描き直す
                 assembly: equationAssembly,
-                existingISprite: finale.iSprite,
+                existingISprite: trigger.iSprite,
                 camera,
                 starField, // ← 星→ψ→=の収束(schrodinger-sequence-timeline.md ⑸〜⑺)に使う
                 onHbarArrived: () => { console.log('ħがiに到着'); },
@@ -1534,29 +1543,29 @@ renderer.domElement.addEventListener('click', (e) => {
     return; // i 以外は引き続き無視
   }
 
-  // ★ここが消えていた本来のトリガー。フィナーレ未開始時に星を押すとここで開始する
-  const finaleHit = raycaster.intersectObject(finale.star)[0];
-  if (finaleHit) {
-    finaleActive = true;
+  // ★ここが消えていた本来のトリガー。TRIGGER未開始時に星を押すとここで開始する
+  const triggerHit = raycaster.intersectObject(trigger.star)[0];
+  if (triggerHit) {
+    triggerActive = true;
     cameraBusy = true; // 念のため既存の排他制御にも乗せておく
-    // ★ 2026-10-21 追加(「Shift+左ドラッグでカメラを横移動してからfinaleに入ると、
-    //   phase1→phase3のカメラ移動がおかしくなる」への対応): OrbitControlsのパン
+    // ★ 2026-10-21 追加(「Shift+左ドラッグでカメラを横移動してからtriggerに入ると、
+    //   phase1→phase2のカメラ移動がおかしくなる」への対応): OrbitControlsのパン
     //   (Shift+左ドラッグ)はcamera.positionとcontrols.targetを同じ量だけ平行移動する。
-    //   finale以降の演出は「ホームの標準姿勢(target=HOME_CAMERA_TARGET)から始まる」前提の
+    //   trigger以降の演出は「ホームの標準姿勢(target=HOME_CAMERA_TARGET)から始まる」前提の
     //   ため、パンが残ったまま入ると、開始姿勢が毎回ズレて以後の移動量がずれる。
     //   そこで突入の直前に、パン分(controls.target - HOME_CAMERA_TARGET)だけ
-    //   camera/targetを短いtweenで戻して標準姿勢に揃えてから、runFinaleを始める。
-    const startFinale = () => {
-      runFinale({
-        camera, controls, dialogue, finale,
+    //   camera/targetを短いtweenで戻して標準姿勢に揃えてから、runTriggerを始める。
+    const startTrigger = () => {
+      runTrigger({
+        camera, controls, dialogue, trigger,
         onOrigin: () => { /* 必要ならここで公案の見た目切り替え等 */ },
         onDone: () => {
-          finaleCameraSettled = true; // ← カメラがFINALE_DESTに完全静止。ここで初めてiクリックを受け付ける
+          triggerCameraSettled = true; // ← カメラがTRIGGER_DESTに完全静止。ここで初めてiクリックを受け付ける
         },
       });
     };
     const panOffset = controls ? controls.target.clone().sub(HOME_CAMERA_TARGET) : null;
-    if (controls) controls.enablePan = false; // 突入後にパンが再発しないように(finale中はcontrols.updateも止まっているが念のため)
+    if (controls) controls.enablePan = false; // 突入後にパンが再発しないように(trigger中はcontrols.updateも止まっているが念のため)
     if (panOffset && panOffset.lengthSq() > 1e-6) {
       controls.enabled = false;
       const camStart = camera.position.clone();
@@ -1573,11 +1582,11 @@ renderer.domElement.addEventListener('click', (e) => {
           camera.position.copy(camStart).sub(panOffset);
           controls.target.copy(HOME_CAMERA_TARGET);
           camera.lookAt(controls.target);
-          startFinale();
+          startTrigger();
         },
       });
     } else {
-      startFinale();
+      startTrigger();
     }
     return;
   }
@@ -1697,7 +1706,16 @@ if (archer.visible) {
     }
   }
 
-  const axisHit = raycaster.intersectObjects(axes.axisHitAreas)[0];
+  // ★ 軸本体のシリンダーに加えて、X/Y/Zラベル(スプライト)も軸クリックの対象にする。
+  //   RaycasterはSprite/Meshのvisible=falseを見ないため、ここで明示的に除外する:
+  //   ・ステーション滞在中は該当軸のラベルがvisible=falseになる(showX/Y/ZOverlay)ので、消えている文字では反応させない
+  //   ・軸がフェードアウト中(isAxesVisible()=false)はラベルも対象外にする
+  //   (ラベル非表示時のレイヤー退避は axisLabels.hide() 側で済んでいる)
+  const axisHitTargets = [
+    ...axes.axisHitAreas,
+    ...(axes.isAxesVisible() ? axisLabels.labelHitAreas.filter((s) => s.visible) : []),
+  ];
+  const axisHit = raycaster.intersectObjects(axisHitTargets)[0];
   if (axisHit) {
     const name = axisHit.object.userData.axisName;
     // TODO: 到達後にAXIS_CONTENT[name]を参照して、原点の点や軸ラベルを実際に表示する(次のステップ。X/Yは実装済み)
@@ -1746,6 +1764,19 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   // isActiveでない間はuniverse.js側で即returnするので、呼びっぱなしで無害。
   // ★ 2026-10-27 撤廃(ご指示反映): 方程式の画像の「色変化の遊び効果」(ポインターが近いほど色が変わる)をやめた。
   //   updateEquationHoverByPointer(universe, camera, e.clientX, e.clientY);
+
+  // ★ 追加: 緑の星のホバー(trigger突入前のみ。突入後はtriggerActiveで無効)。
+  //   星が表示されている(visible)間だけ判定する。隠れている星の位置がカーソルでバレないようにするため。
+  //   ここでcursorを決めて return すれば、下の既存の'pointer'/'default'の上書きと衝突しない。
+  if (!triggerActive && intro.getState() === 'home') {
+    pointer.x = (e.clientX / innerWidth) * 2 - 1;
+    pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    if (trigger.star.visible && raycaster.intersectObject(trigger.star)[0]) {
+      if (renderer.domElement.style.cursor !== TRIGGER_STAR_CURSOR) renderer.domElement.style.cursor = TRIGGER_STAR_CURSOR;
+      return;
+    }
+  }
 
   const inputEnabled = !cameraBusy && intro.getState() === 'home';
 
@@ -1800,14 +1831,14 @@ window.addEventListener('keydown', (e) => {
   dumpCamera('keydown');
 });
 
-// ── finale以前: カメラが星の外側へ出ないようにする「見えない壁+重力」 ─────
+// ── trigger以前: カメラが星の外側へ出ないようにする「見えない壁+重力」 ─────
 // 原点からの距離がCAMERA_GRAVITY_START以内なら何もしない。それより外では、外へ行くほど
 // 強くなる原点方向の引力(二次カーブ)でカメラを引き戻し、CAMERA_HARD_LIMITでは完全に止める。
 // ・controls.update()の直後に呼ぶこと(OrbitControlsはupdate内でcamera.positionから
 //   毎回オフセットを読み直すので、ここで位置を書き換えても内部状態と食い違わない)。
 // ・ユーザー操作中(controls.enabled)だけ補正する。GSAPによる自動移動中(flyTo系はcontrolsを
 //   無効化する)に壁を効かせると、演出のtweenと喧嘩して挙動が崩れるため。
-// ・finale開始後・宇宙ページ中は呼ばれない(animate側の条件参照)ので、そこでは自由に動ける。
+// ・trigger開始後・宇宙ページ中は呼ばれない(animate側の条件参照)ので、そこでは自由に動ける。
 function applyStarBoundary(deltaSeconds) {
   const r = camera.position.length();
   if (r <= CAMERA_GRAVITY_START) return;
@@ -1835,7 +1866,7 @@ function animate() {
   // ★ 2026-09-11 バグ修正: intro.getState()はuniverseページに入っても'home'には
   //   ならないため、この行はuniverse突入後もそのまま動き続けていた。その結果、
   //   enterUniverse完了直後の一瞬(record.phase==='inactive'でcontrols.update()が
-  //   まだ一度も呼ばれていない間)だけ、Phase3時代のlookTarget(数式ズームの注視点)へ
+  //   まだ一度も呼ばれていない間)だけ、Phase2時代のlookTarget(数式ズームの注視点)へ
   //   カメラの向きが引っ張られ、「一瞬だけ小さく・水平っぽい視点が見えてから、
   //   極端に視点が切り替わる」ように見えていた。universe.isActiveの間はこの行を
   //   完全にスキップし、向きの制御をOrbitControls(controls.target)に一元化する。
@@ -1864,9 +1895,9 @@ function animate() {
   //   あるのか、という根本原因はintro側(このファイルには無い、intro状態機械の
   //   実装)にある可能性が高い。intro側で「universe突入後は二度と'home'を返さない」
   //   ことを保証できるなら、そちらで直すのがより根本的な修正になる。
-  if (state === 'home' && !universe.isActive && !cameraBusy && !finaleActive) controls.update();
-  // finale以前・ユーザー操作中のみ、星の外側へ出ないよう壁+重力を適用(宇宙ページ/finale中/自動移動中は対象外)
-  if (state === 'home' && !universe.isActive && !cameraBusy && !finaleActive && controls.enabled) applyStarBoundary(delta);
+  if (state === 'home' && !universe.isActive && !cameraBusy && !triggerActive) controls.update();
+  // trigger以前・ユーザー操作中のみ、星の外側へ出ないよう壁+重力を適用(宇宙ページ/trigger中/自動移動中は対象外)
+  if (state === 'home' && !universe.isActive && !cameraBusy && !triggerActive && controls.enabled) applyStarBoundary(delta);
   if (state === 'home' && !universe.isActive && !labelsShown) { labelsShown = true; axisLabels.show(); }
   dialogue.updatePosition();
   // Aスター化した矢のスターダスト更新。矢が非表示の間も、飛んだ後に残った粒が消えるまで毎フレーム呼ぶ。
@@ -1880,54 +1911,13 @@ function animate() {
   if (aStar.userData.update) aStar.userData.update(delta); // Aスターの尾(スターダスト)
   updateUniverse(universe, delta, camera); // 宇宙ページの三軸回転(固定軸まわりのカルーセル回転。isActiveがfalseの間は内部で即returnするので無害)
   updateSolarSystem(solarSystem, clock.getElapsedTime()); // 太陽系(召喚=startSolarSystem前は内部で即returnするので無害)
-  // ★ 2026-10-19 追加(ご指示反映): 「左右ドラッグ時に即カメラが離れて銀河が回って見える」への対応。
-  //   ドラッグ中はカメラの自動回転が止まる(下記)ので、銀河だけ回り続けると相対的に
-  //   銀河が回転して見えてしまう。画角変更(透視図への切り替え)が確定するまでは銀河も止め、
-  //   確定(record.perspectiveActive)した瞬間から回し始める。途中で離して中断した場合は、
-  //   カメラの自動回転と一緒に再開するので相対角度は保たれる。
-  const galaxyFrozenByProjectionDrag = projectionDragActive && !record.perspectiveActive;
-  updateGalaxy(galaxy, galaxyFrozenByProjectionDrag ? 0 : delta); // tripod直下の巨大な銀河の自転(state==='hidden'の間は内部で即returnするので無害)
-  // ★ 2026-09-12 追加: 「カメラも銀河と同じ速度で回転させたい」とのご指示の反映。
-  //   galaxy.js側のupdateGalaxy()は、通常状態(record.js側のneedleSpinActive以外)では
-  //   direction(=GALAXY_ROTATION_DIRECTION) × GALAXY_ANGULAR_SPEED × deltaSecondsぶん
-  //   starsGroupをworld Y軸まわりに毎フレーム回している。ここではまったく同じ角度・
-  //   同じ軸・同じ向きで、cameraをUNIVERSE_CAMERA_TARGETまわりに回す
-  //   (=カメラと銀河が同じ速さ・同じ向きで一緒に回るので、両者の相対角度は変わらない
-  //   ==銀河から見るとカメラは静止して見える形になる)。
-  //   universe.isActiveの間だけ動かす(それ以外のページのカメラには影響させない)。
-  //   OrbitControls.update()はuniverse.isActive中は呼ばれていない(state!=='home'のため)
-  //   ので、ここでcamera.positionを直接動かしてもcontrols側と競合しない。
-  //   ★ 2026-09-12 追加: 右ドラッグ中(projectionDragActive)・右ドラッグ確定後
-  //   (record.perspectiveActive)は、この自動回転を止める。ドラッグ中はカメラ位置を
-  //   setUniverseProjectionMix側が直接制御しているため競合するし、確定後(通常の
-  //   透視図に切り替わった状態)は「銀河を背景として固定する」演出自体が終わっている
-  //   フェーズなので、回転を続ける意味がない。
-  //   ★ 2026-09-18 訂正: 一度は「record.phase==='inactive'の間だけ」というガードを
-  //   試したが、record.phaseはenterUniverse完了とほぼ同時(startRecordDisplay)に
-  //   'mirror'になり、ユーザーが実際にcarouselを眺めている間ずっと'mirror'のまま
-  //   なので、このガードだと自動回転が最初から一切動かなくなってしまっていた
-  //   (「カメラが固定され、銀河だけが回っているように見える」というご指摘の症状)。
-  //   record/鏡tripodの表示(HOME_CAMERA_POS基準の小さいスケール)とuniverseの銀河・
-  //   tripod表示(UNIVERSE_CAMERA_POS基準の大きいスケール)は別々のカメラ位置を
-  //   同じ`camera`オブジェクトに対して指定するが、両者は同時に成立するものであり、
-  //   record.phaseの値では「今どちらの視点にすべきか」を判定できないと判明した
-  //   ため、このガードは撤去した。
-  //   本当の原因はcamera.position自体が(setProjectionMix(0)の多重発火により)
-  //   壊れていたことだったので、そちらをonMid側で修正済み(上記2026-09-18の
-  //   コメント参照)。
-  try {
-    if (universe.isActive && !projectionDragActive && !record.perspectiveActive && !overviewActive) {
-      const relative = camera.position.clone().sub(UNIVERSE_CAMERA_TARGET);
-      relative.applyAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        GALAXY_ROTATION_DIRECTION * GALAXY_ANGULAR_SPEED * delta
-      );
-      camera.position.copy(UNIVERSE_CAMERA_TARGET).add(relative);
-      camera.lookAt(UNIVERSE_CAMERA_TARGET);
-    }
-  } catch (err) {
-    console.error('universe camera auto-rotate failed:', err);
-  }
+  // ★ 2026-11-03 簡素化(ご指示反映): 銀河の回転は「ドラッグ完了」で始める。
+  //   ・左右ドラッグ(またはShift+ドラッグ/2本指横スワイプ)で透視図への切り替えが確定する
+  //     (record.perspectiveActive=true)までは、銀河は一切回さない。確定した瞬間から回し始める。
+  //   ・カメラは最初から一切回さない(以前あった「銀河と同じ速度でカメラを回して銀河を静止して見せる」
+  //     自動回転は削除した)。銀河が止まっている間はカメラも止まっているので、両者の相対角度は
+  //     ずれようがなく、ドラッグ中・中断時の特別扱い(projectionDragActive判定)も不要になった。
+  updateGalaxy(galaxy, record.perspectiveActive ? delta : 0); // tripod直下の巨大な銀河の自転(state==='hidden'の間は内部で即returnするので無害)
   // ★ バグ修正: 以前はupdateRecordDisplay→updateTripodRingSwapの順で呼んでいたが、
   //   record.mirrorVisualAnchorの position/visible/quaternion を「今フレーム分」確定させる
   //   のはupdateTripodRingSwap側であり、updateRecordDisplay側(鏡の可視判定・cubeCameraの
