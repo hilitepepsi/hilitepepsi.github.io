@@ -589,14 +589,14 @@ const BREAK_SPLASH_RATE     = 0.10;  // 1区切りごとに、条件を満たす
 // この「鎖」の状態そのもの(各単語のリーダー位置・軌跡履歴)はCPU(JS)側で
 // 毎フレーム計算し、結果の位置・向きだけをparticleBufferへ書き込む
 // (updateSwimChains()。基本設計や他の演出はWGSL側でGPU計算しているのと対照的)。
-// フォントはCormorant Garamondのイタリック(セリフ体)。
+// フォントはTimes New Romanのイタリック(セリフ体)。
 // ここに好きな一文を2つ入れる。著作権のある文章(書籍からの引用など)を
 // 書き込む場合は引用の範囲・扱いに注意すること。
 const SWIM_QUOTES = [
   "but I can still see his friendly, lovely, sociable face before me, at wide intervals!",
   "this lad instantaneously translated every word to perfection except “vague”, ",
 ];
-const SWIM_FONT_FAMILY = "'Cormorant Garamond', 'Times New Roman', serif";
+const SWIM_FONT_FAMILY = "'Times New Roman', Times, serif";
 // 各引用文の単語群を、赤道をまたいで互いに重ならないよう緯度をずらして
 // 初期配置する(その後は海流に乗って自由に動いていく)。
 const SWIM_QUOTE_LATS = [0.16, -0.16];
@@ -707,10 +707,16 @@ const LAKE_EDGE_BAND_LAKE = 0.018; // 打鍵で育つ「完成する湖」側の
 // 波(鼓動)を送り出し続ける。一周(往路+復路)の波紋自体はここで完全に
 // 運動を終了し(以降は起伏0)、鼓動は別レイヤーとして球全体を一斉に
 // 呼吸させる(局所的に伝わるリングではなく、全体が同時に膨らみ縮む)。
-const LAKE_VIB_FREQ       = 150.0; // 同心円の細かさ(波の数)
+// 【波長を長くした理由】旧値150だと波長が約0.042radで、球面の粒子間隔(約0.014rad、65k点)の
+// 3倍程度しかなく、1波長を粒子3個ほどで描くことになりエイリアシング(ノイズ状の縞)が出ていた。
+// 14なら波長は約0.45rad(約26度)で、1波長あたり30粒子以上になり、滑らかな同心円として見える。
+// 波を細かく(密に)したいときは大きく、ゆったりさせたいときは小さくする。
+const LAKE_VIB_FREQ       = 14.0;  // 同心円の細かさ(波の数)。波長 ≒ 2π/この値 [rad]
 const LAKE_VIB_RETURN_DUR = 7.2;   // 復路(裏側→開始点)にかかる秒数。波の進行速度を半減=時間を倍に
-const LAKE_VIB_AMP_BASE   = 0.015; // 波紋開始時点の振幅
-const LAKE_VIB_AMP_PEAK   = 0.16;  // 球の完成時(往路完了時)に達する最大振幅
+const LAKE_VIB_AMP_BASE   = 0.01;  // 波紋開始時点の振幅
+// 波長を約11倍にしたので、旧振幅0.16のままだと球が大きく歪むため、勾配(振幅×周波数)が
+// 穏やかになるよう下げた。山の部分は波の高さ0.04以上で白く光る(crestGlow)ため、この振幅でも縞ははっきり見える。
+const LAKE_VIB_AMP_PEAK   = 0.06;  // 球の完成時(往路完了時)に達する最大振幅
 // ---- 鼓動(一周の波紋が静まった後、球全体を一斉に呼吸させる拍動) ----
 const LAKE_HEARTBEAT_PERIOD = 3.4;  // 鼓動の間隔(1拍にかかる秒数)
 const LAKE_HEARTBEAT_DISP   = 0.05; // 鼓動による球全体の膨縮量(半径方向)
