@@ -9,33 +9,33 @@ const HOTSPOTS = [
                                    ] },
   { pos: [-80, -130, 100],  text: [{ text: 'This is a people shooting hat.', work: 'The Catcher in the Rye'},
                                    { text: 'Mine came from Mark Cross.', work: 'The Catcher in the Rye'},
-                                   { text: 'The fish is different. I\’m talking about the ducks,', work: 'The Catcher in the Rye'},
+                                   { text: 'The fish is different. I\’m talking about the *ducks*,', work: 'The Catcher in the Rye'},
                                    ] },
   { pos: [-450, -330, 50],  text: [{ text: 'Go home and get your bike and meet me in front of Bobby\’s house. Hurry up.', work: 'The Catcher in the Rye'},
-                                   { text: 'But twice ─ twice ─ we were there it started to rain.', work: 'The Catcher in the Rye'},
+                                   { text: 'But twice ─ *twice* ─ we were there it started to rain.', work: 'The Catcher in the Rye'},
                                    { text: 'He never got sore about anything', work: 'The Catcher in the Rye'},
                                    ] },
   //Y
-  { pos: [120, -200, -150], text: [{ text:'That was a secret bugle only Admirals to hear.\n— Boo Boo Glass', work: 'Down at the Dinghy'},
+  { pos: [120, -200, -150], text: [{ text:'That was a secret bugle can that only admirals are allowed to hear.\n— *Boo Boo Glass*', work: 'Down at the Dinghy'},
                                    ] },
-  { pos: [200, -100, -260], text: [{ text: 'What did one wall say to the other wall?\n— Charles', work: 'For Esmé—with Love and Squalor'},
+  { pos: [200, -100, -260], text: [{ text: 'What did one wall say to the other wall?\n— *Charles*', work: 'For Esmé—with Love and Squalor'},
                                    { text: 'The door banged open without having been wrapped on. X raised his head, turned it, and corporal Z standing in the door.', work: 'For Esmé—with Love and Squalor'},
                                    ] },
-  { pos: [-50, -30, -100],  text: [{ text: 'Did the tigers run all around that tree?\n─ Sybil Carpenter', work: 'A Perfect Day for Bananafish'},
-                                    { text: 'Here comes a wave.\n─ Sybil Carpenter', work: 'A Perfect Day for Bananafish'},
+  { pos: [-50, -30, -100],  text: [{ text: 'Did the tigers run all around that tree?\n─ *Sybil Carpenter*', work: 'A Perfect Day for Bananafish'},
+                                    { text: 'Here comes a *wave*.\n─ *Sybil Carpenter*', work: 'A Perfect Day for Bananafish'},
                                    ] },
   { pos: [-30, -100, -60],  text: [{ text:'gift horse', work: 'Teddy',},
                                    { text:'triumvirate', work: 'Teddy'},
                                    ] },
   //Z
-  { pos: [-200,10, -150],   text: [{ text: 'I want to talk to Seymour.\n─Franny Glass', work: 'Zooey'},
-                                   { text: 'The only kind of chicken soup Bessie ever brings to anybody around this madhouse.\n─ Zooey Glass', work: 'Zooey'},
+  { pos: [-200,10, -150],   text: [{ text: 'I want to talk to Seymour.\n─ *Franny Glass*', work: 'Zooey'},
+                                   { text: 'The only kind of chicken soup Bessie ever brings to anybody around this madhouse.\n─ *Zooey Glass*', work: 'Zooey'},
                                    ] },
-  { pos: [-70, 30, -190],   text: [{ text: 'I was Mercury himself.\n─ Buddy Glass', work: 'Seymour: an Introduction'},
-                                   { text: 'This which, I suggest, though possibly not to everyone’s taste, is highly literate vaudeville.\n─ Buddy Glass', work: 'Seymour: an Introduction'},
+  { pos: [-70, 30, -190],   text: [{ text: 'I was Mercury himself.\n─ *Buddy Glass*', work: 'Seymour: an Introduction'},
+                                   { text: 'This which, I suggest, though possibly not to everyone’s taste, is highly literate vaudeville.\n─ *Buddy Glass*', work: 'Seymour: an Introduction'},
                                    ] },
-  { pos: [-100, 150, -140], text: [{ text: 'Keep me up till five only because all your stars are out, and for other reason.\n─ Seymour Glass', work: 'Seymour: an Introduction'},
-                                   { text: 'All we do our whole lives is go from one little piece of Holy Ground to the next.\n─ Seymour Glass', work: 'Seymour: an Introduction'},
+  { pos: [-100, 150, -140], text: [{ text: '*Keep me up till five only because all your stars are out, and for other reason.*\n─ *Seymour Glass*', work: 'Seymour: an Introduction'},
+                                   { text: 'All we do our whole lives is go from one little piece of Holy Ground to the next.\n─ *Seymour Glass*', work: 'Seymour: an Introduction'},
                                     ]},
 
 ];
@@ -119,22 +119,21 @@ const STARBURST_ROOT = 2.85;      // 針の根本の太さ(STARBURST_COREに対�
 const STARBURST_TAPER = 0;        // 針の収束(0で根本の太さのまま先端まで。大きいほど先が細くなる)
 const STARBURST_DIAG = 0.41;      // 斜めスパイクの強さ(十字を1としたときの比。長さは十字の半分)
 const STARBURST_GAIN = 2.6;       // 全体の明るさ
-// ── スペクトル(先端の虹色のちらつき)は「カメラが動いた時」だけ強くなる ──
+// ── スペクトル(先端の虹色のちらつき)は「カメラの状態が変化した時」だけ強くなる ──
+//   ※ 動きの「向き」による色ずれ(分散)は廃止。向きは見ず、変化の大きさ(0〜1)だけで出し入れする。
 const STARBURST_SPEC_REST = 0;    // 静止時のスペクトル量(0で無し)
-const STARBURST_SPEC_MOVE = 1;    // カメラが十分速く動いた時のスペクトル量
-const MOTION_FULL = 1.5;          // この角速度(rad/秒)で動きを最大(1)とみなす(仮値)
-const MOTION_ATTACK = 12;         // 動き出しへの追従の速さ(大きいほどすぐ虹色が出る)
+const STARBURST_SPEC_MOVE = 1;    // カメラが十分速く変化した時のスペクトル量
+const MOTION_FULL = 1.5;          // この角速度(rad/秒)で変化を最大(1)とみなす(仮値)
+const MOTION_ATTACK = 12;         // 変化し始めへの追従の速さ(大きいほどすぐ虹色が出る)
 const MOTION_DECAY = 2.5;         // 止まった後の余韻の速さ(小さいほど長く残る。2.5で約0.4秒)
 const MOTION_POS_WEIGHT = 0.002;  // カメラの平行移動(1単位あたり)を回転(rad)に換算する重み
 const MOTION_ZOOM_FULL = 1.0;     // この速さ(ln倍率/秒。2倍ズームを約0.7秒)でズームを最大(1)とみなす(仮値)
-const STARBURST_DISPERSION = 0.035; // 色ずれの最大量(板の半幅=1に対する比)。赤と青が動きの向きに±この量ずれる
 
-// ── カメラの動き量: 全starburstで共有。main.jsの変更なしで、onBeforeRenderで受け取るcameraから測る ──
-//   ・vx,vy : 画面上で星が流れる向きと速さ(回転+平行移動。長さは0〜1)。色ずれの向きになる。
-//   ・zoom  : ズームの速さ(0〜1)。カメラのzoom / fov / 前後移動(ドリー)のどれでも反応する。色ずれは画面中心から放射状。
+// ── カメラの変化量: 全starburstで共有。main.jsの変更なしで、onBeforeRenderで受け取るcameraから測る ──
+//   回転・平行移動・ズーム(zoom/fov)のどれが起きても、その大きさを1つの値 amount(0〜1)にまとめる。向きは見ない。
 const _q = new THREE.Quaternion(), _qPrev = new THREE.Quaternion(), _qInv = new THREE.Quaternion(), _dq = new THREE.Quaternion();
-const _p = new THREE.Vector3(), _pPrev = new THREE.Vector3(), _dp = new THREE.Vector3(), _sp = new THREE.Vector3();
-const motion = { vx: 0, vy: 0, zoom: 0, t: 0, lz: 0, lf: 0, init: false };
+const _p = new THREE.Vector3(), _pPrev = new THREE.Vector3();
+const motion = { amount: 0, t: 0, lz: 0, lf: 0, init: false };
 function updateMotion(camera, now) {
   camera.getWorldQuaternion(_q);
   camera.getWorldPosition(_p);
@@ -145,26 +144,15 @@ function updateMotion(camera, now) {
   }
   const dt = now - motion.t;
   if (dt < 0.003) return; // 同じフレームの複数回呼び出しは1回に絞る
-  // 前フレームのカメラ座標系での回転量と移動量
+  // 前フレームからの回転量(rad。向きは問わない)と移動量
   _qInv.copy(_qPrev).invert();
   _dq.copy(_qInv).multiply(_q);
-  const sg = _dq.w < 0 ? -1 : 1;
-  const rx = 2 * sg * _dq.x, ry = 2 * sg * _dq.y; // 小さい回転なので、軸まわりの角度 ≒ 2×クォータニオン成分
-  _dp.copy(_p).sub(_pPrev).applyQuaternion(_qInv);
-  // 画面上で星が流れる向き: カメラが右を向けば星は右へ流れ(ry>0)、上を向けば下へ流れる(rx>0)。平行移動は逆向き。
-  const k = 1 / (dt * MOTION_FULL);
-  let tx = (ry - _dp.x * MOTION_POS_WEIGHT) * k;
-  let ty = (-rx - _dp.y * MOTION_POS_WEIGHT) * k;
-  const len = Math.hypot(tx, ty);
-  if (len > 1) { tx /= len; ty /= len; }
-  // ズーム: zoom倍率・fov・前後移動(原点までの距離に対する割合)の変化を足す
-  const zr = (Math.abs(lz - motion.lz) + Math.abs(lf - motion.lf) + Math.abs(_dp.z) / Math.max(_p.length(), 1)) / dt;
-  const tz = Math.min(zr / MOTION_ZOOM_FULL, 1);
-  const f = (target, cur) => 1 - Math.exp(-Math.min(dt, 0.1) * (target > cur ? MOTION_ATTACK : MOTION_DECAY));
-  const fv = f(Math.hypot(tx, ty), Math.hypot(motion.vx, motion.vy));
-  motion.vx += (tx - motion.vx) * fv;
-  motion.vy += (ty - motion.vy) * fv;
-  motion.zoom += (tz - motion.zoom) * f(tz, motion.zoom);
+  const angle = 2 * Math.atan2(Math.hypot(_dq.x, _dq.y, _dq.z), Math.abs(_dq.w));
+  const move = _pPrev.distanceTo(_p) * MOTION_POS_WEIGHT;
+  const zoomRate = (Math.abs(lz - motion.lz) + Math.abs(lf - motion.lf)) / dt;
+  const target = Math.min(((angle + move) / dt) / MOTION_FULL + zoomRate / MOTION_ZOOM_FULL, 1);
+  const k = 1 - Math.exp(-Math.min(dt, 0.1) * (target > motion.amount ? MOTION_ATTACK : MOTION_DECAY));
+  motion.amount += (target - motion.amount) * k;
   _qPrev.copy(_q); _pPrev.copy(_p); motion.t = now; motion.lz = lz; motion.lf = lf;
 }
 
@@ -182,8 +170,7 @@ const STARBURST_VERTEX = `
 
 const STARBURST_FRAGMENT = `
   uniform vec3 uColor;
-  uniform float uTime, uA, uGain, uCoreGain, uSharp, uLen, uRoot, uTaper, uDiag, uSpec, uDisperse;
-  uniform vec2 uDir; // 動き(ズームなら放射)の向きと強さ。色ずれの方向
+  uniform float uTime, uA, uGain, uCoreGain, uSharp, uLen, uRoot, uTaper, uDiag, uSpec;
   varying vec2 vP;
 
   // 横向きの針1本。根本は太く、先へ行くほど細く、先端でちょうど0に収束する。
@@ -204,19 +191,14 @@ const STARBURST_FRAGMENT = `
     float a = uA;
     float win = 1.0 - smoothstep(0.85, 1.0, max(abs(p.x), abs(p.y)));
 
-    // 急峻なコア: 高い指数のMoffat + 白く飛ぶ極小の芯
-    // 色ずれ(分散): 動きの向きに沿って、赤と青の像を逆向きにずらす。止まっていればuDir=0でずれない。
-    vec2 sh = uDir * uDisperse;
-    vec2 pr = p - sh, pb = p + sh;
-
-    // 急峻なコア: 高い指数のMoffat + 白く飛ぶ極小の芯(チャンネルごとに位置をずらして評価)
-    vec3 rr = vec3(length(pr), length(p), length(pb)) / a;
-    vec3 core = uCoreGain * pow(1.0 + (rr / 2.5) * (rr / 2.5), vec3(-uSharp)) + 2.0 * uCoreGain * exp(-rr * rr * 0.12);
+    // 急峻なコア: 高い指数のMoffat + 白く飛ぶ極小の芯(全チャンネル同じ位置。動きの向きによる色ずれは無し)
+    float rr = length(p) / a;
+    vec3 core = vec3(uCoreGain * pow(1.0 + (rr / 2.5) * (rr / 2.5), -uSharp) + 2.0 * uCoreGain * exp(-rr * rr * 0.12));
 
     // 分光: 波長ごとに針の長さもずらす(赤は長く、青は短く)。uSpecが0なら全チャンネル同じ=白。
-    vec3 s = vec3(spikes(pr, uLen * (1.0 + 0.12 * uSpec), a),
-                  spikes(p,  uLen,                        a),
-                  spikes(pb, uLen * (1.0 - 0.12 * uSpec), a));
+    vec3 s = vec3(spikes(p, uLen * (1.0 + 0.12 * uSpec), a),
+                  spikes(p, uLen,                        a),
+                  spikes(p, uLen * (1.0 - 0.12 * uSpec), a));
 
     // 先端のちらつく虹色(針の先ほど強く、針ごと・時間ごとに明滅)
     float u = max(abs(p.x), abs(p.y)) / uLen;
@@ -284,8 +266,6 @@ export function createHotspots(scene) {
           uTaper: { value: STARBURST_TAPER },
           uDiag: { value: STARBURST_DIAG },
           uSpec: { value: STARBURST_SPEC_REST },
-          uDisperse: { value: STARBURST_DISPERSION },
-          uDir: { value: new THREE.Vector2() },
         },
         vertexShader: STARBURST_VERTEX,
         fragmentShader: STARBURST_FRAGMENT,
@@ -296,19 +276,12 @@ export function createHotspots(scene) {
       const glow = new THREE.Mesh(starburstGeo, sbMat);
       glow.frustumCulled = false; // 頂点シェーダーで板を広げるので、ジオメトリの境界では判定できない
       glow.raycast = noRaycast;
-      // カメラの動き量に応じてスペクトルを出す(cameraはonBeforeRenderの引数で受け取るので、main.jsの変更は不要)。
+      // カメラの状態が変化している間だけスペクトルを出す(cameraはonBeforeRenderの引数で受け取るので、main.jsの変更は不要)。
       glow.onBeforeRender = (renderer, scene_, camera) => {
         const now = performance.now() * 0.001;
         updateMotion(camera, now);
         sbMat.uniforms.uTime.value = now;
-        // 色ずれの向き = 画面上の流れ + ズーム時の放射(この星の画面位置から外向き。中心の星はずれない)
-        _sp.setFromMatrixPosition(m.matrixWorld).project(camera);
-        let px = _sp.x, py = _sp.y;
-        const pl = Math.hypot(px, py);
-        if (pl > 1) { px /= pl; py /= pl; }
-        sbMat.uniforms.uDir.value.set(motion.vx + motion.zoom * px, motion.vy + motion.zoom * py);
-        const amt = Math.min(Math.hypot(motion.vx, motion.vy) + motion.zoom, 1);
-        sbMat.uniforms.uSpec.value = STARBURST_SPEC_REST + (STARBURST_SPEC_MOVE - STARBURST_SPEC_REST) * amt;
+        sbMat.uniforms.uSpec.value = STARBURST_SPEC_REST + (STARBURST_SPEC_MOVE - STARBURST_SPEC_REST) * motion.amount;
       };
       m.add(glow); // 星本体(m)に追従して動き、m.scaleにも従うよう子として追加
       m.userData.glowMaterial = sbMat; // uA / uGain / uLen / uRoot / uSharp などを実行時に調整できるよう公開
