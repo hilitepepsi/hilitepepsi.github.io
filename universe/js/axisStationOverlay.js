@@ -30,7 +30,8 @@ const TIP_STAR_GAIN = 1;
 
 // 「点」は球ではなく、スパイク星(axes.jsのmakeStarMesh)で表す。
 // 終端(tipStar=true)だけが見た目を持ち、原点側は当たり判定のみ。Bloomには頼らない(main.jsで除外済み)。
-function makeDot({ tipStar = false } = {}) {
+// tipScale: 終端の星(芯+スパイク)の大きさの倍率。既定は1(従来どおり)。X軸の終端だけ2を渡す。
+function makeDot({ tipStar = false, tipScale = 1 } = {}) {
   // ★ 球(SphereGeometry+発光色)は廃止。見た目は「スパイク星」(tipStar=true の終端のみ)で、
   //   原点側の点は見た目なし(原点には axes.js の一等星があるので、ここは当たり判定だけ持つ)。
   //   ルートは空のGroup。位置・visible・userDataは従来どおり呼び出し側が設定する。
@@ -46,7 +47,7 @@ function makeDot({ tipStar = false } = {}) {
   dot.add(hitArea);
 
   if (tipStar) {
-    const star = makeStarMesh({ color: DOT_COLOR, coreColor: TIP_STAR_CORE, size: TIP_STAR_SIZE, spike: TIP_STAR_SPIKE, gain: TIP_STAR_GAIN });
+    const star = makeStarMesh({ color: DOT_COLOR, coreColor: TIP_STAR_CORE, size: TIP_STAR_SIZE * tipScale, spike: TIP_STAR_SPIKE * tipScale, gain: TIP_STAR_GAIN });
     // 波動関数(zAxisWave)など他の半透明物に隠れないよう、深度テストは切って最前面に描く
     star.material.depthTest = false;
     star.renderOrder = 11;
@@ -61,7 +62,9 @@ function makeDot({ tipStar = false } = {}) {
 //   makeTextSprite側にそれらを実際に使うコードが無く「指定しても無視される」バグがあった。
 //   結果として実際に描画されていたのはmakeTextSpriteの既定値(明るめの色・shadowBlurFactor=0.08)。
 //   そちらの見た目(ブラー強め)の方を採用したいとのことなので、あえて上書きせず既定値のままにする。
-const TITLE_TEXT_OPTS = {};
+// ★ 2026-10-30 変更: タイトルを細字に。makeTextSpriteの既定fontWeight=600はTimes New Romanでは太字に
+//   丸められるため、ここで400(標準)を指定する。さらに細くしたい場合は書体自体を変える必要がある。
+const TITLE_TEXT_OPTS = { fontWeight: 400 };
 
 // ── 隠しボタン「i」(虚数単位)。Y軸ステーション限定 ──────
 // Teddyの点(yEndDot)と同じ「発光する点」の仕組みを流用しつつ、
@@ -204,7 +207,7 @@ export function createAxisStationOverlay(scene) {
   const xStationView = getAxisStationView(AXIS_WORLD_DIR.X, AXIS_LENGTH);
 
   // 終端の点(持続表示。クリック操作は無し)
-  const xEndDot = makeDot({ tipStar: true });
+  const xEndDot = makeDot({ tipStar: true, tipScale: 2 }); // ← X軸の終端だけ2倍サイズ(芯・スパイクとも)
   xEndDot.position.copy(AXIS_WORLD_DIR.X.clone().normalize().multiplyScalar(AXIS_LENGTH));
   xEndDot.userData.axisName = 'X';
   xEndDot.userData.contentKey = 'end'; // ← Yのend(Teddy)と同じ仕組みでクリック対応(main.js側)
