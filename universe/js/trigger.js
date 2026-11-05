@@ -4,15 +4,15 @@ import { createCaptionBox, makeCaptionController, createKoanBox, updateKoanScree
 // ── フィナーレの星:(300,300,300)、緑 ─────────────
 // hotspots.js の星とは別枠(1回クリックのみ・専用の演出)なので、
 // main.js 側では hotspotMeshes とは別のオブジェクトとしてレイキャストする。
-export const FINALE_STAR_POS = new THREE.Vector3(50, 50, 50); //(300,300,300)
-const FINALE_COLOR = 0x39ff8c; // 隠しiボタンと同じ緑(#39ff8c)
+export const TRIGGER_STAR_POS = new THREE.Vector3(50, 50, 50); //(300,300,300)
+const TRIGGER_COLOR = 0x39ff8c; // 隠しiボタンと同じ緑(#39ff8c)
 const STAR_HIT_RADIUS = 16;    // hotspots.js の HOTSPOT_HIT_RADIUS と同スケール
  
 // ── 線A移動中に順番に切り替える短い引用。中身は仮。後で差し替え前提 ──
 // 文字列のままならQUOTE_INTERVAL(秒)で一定間隔表示(従来通り)。
 // 個別に表示時間を変えたい行だけ captions.js の CONVERGENCE_QUOTES 等と同じ書き方で
 // { text: '...', duration: 秒数 } にする。
-const FINALE_QUOTES = ['the poems written all over the finger and pocket and everywhere. In green Ink. he’d have something to read when he was in the field and nobody was up at bat.',
+const TRIGGER_QUOTES = ['the poems written all over the finger and pocket and everywhere. In green Ink. he’d have something to read when he was in the field and nobody was up at bat.',
                        'Anyway, that’s what I wrote stradlater’s composition about.','It was a very descriptive subject. … Allie had this left-handed fielder’s mitt.',
                        'All I had to do was change Allie’s name so that nobody would know it was my brother',
                        'I slept in the garage the night he died, and I broke all the goddam windows with my fist,',
@@ -22,22 +22,22 @@ const FINALE_QUOTES = ['the poems written all over the finger and pocket and eve
 const QUOTE_INTERVAL =5; // 1行あたりのデフォルト表示秒数(仮)
 
 // 出典: フィナーレの引用はすべてThe Catcher in the Rye(著者は常にJ.D. Salinger)
-const FINALE_WORK = 'J.D. Salinger — The Catcher in the Rye';
+const TRIGGER_WORK = 'The Catcher in the Rye';
 
 // captions.js の startQuoteSequence と同じ正規化: 文字列 or {text, duration} を
 // 常に {text, duration} の形へ揃えておく。
-function normalizeFinaleQuotes(quotes, defaultDuration) {
+function normalizeTriggerQuotes(quotes, defaultDuration) {
   return quotes.map((q) =>
     typeof q === 'string'
       ? { text: q, duration: defaultDuration }
       : { text: q.text, duration: q.duration ?? defaultDuration }
   );
 }
-const NORMALIZED_FINALE_QUOTES = normalizeFinaleQuotes(FINALE_QUOTES, QUOTE_INTERVAL);
+const NORMALIZED_TRIGGER_QUOTES = normalizeTriggerQuotes(TRIGGER_QUOTES, QUOTE_INTERVAL);
  
 // ── 原点通過後に表示する公案 ──
-const KOAN_TEXT = 'We know the sound of two hands clapping.\nBut what is the sound of one hand clapping?';
-// 公案の出典: Nine Storiesのエピグラフ。引用の出典(FINALE_WORK)と同じ右下の共有出典ボックスに出す。
+const KOAN_TEXT = '*We know the sound of two hands clapping.\nBut what is the sound of one hand clapping?*';
+// 公案の出典: Nine Storiesのエピグラフ。引用の出典(TRIGGER_WORK)と同じ右下の共有出典ボックスに出す。
 const KOAN_WORK = 'Nine Stories (epigraph)';
  
 // ── 演出パラメータ(すべて仮値。実際に見ながら調整する前提) ──
@@ -49,13 +49,13 @@ const Y_AXIS_TRAVEL_DURATION = 6.0; // 原点 → 次の目的地への移動時
  
 const ORIGIN = new THREE.Vector3(0, 0, 0);
 // Y軸の実終端(18,0,0)ではなく、軸から外れた固定点(仮値・要調整)。
- export const FINALE_DEST = new THREE.Vector3(29, -10, -10); //(30-10-10)
+ export const TRIGGER_DEST = new THREE.Vector3(29, -10, -10); //(30-10-10)
 
 // 視線が線A/軸そのものと一致する(edge-on:線が点に潰れて見えなくなる)のを避けるため、
 // 狙う点は原点そのものではなく、少しずらした固定点にする。線A〜原点到達まではこちらを見る。
-const FINALE_LOOK_TARGET = new THREE.Vector3(-1, -1, -1);
-// 原点通過後、FINALE_DESTへ向かう間はこちらを見る。
-export const FINALE_DEST_LOOK_TARGET = new THREE.Vector3(3, 3, 3);
+const TRIGGER_LOOK_TARGET = new THREE.Vector3(-1, -1, -1);
+// 原点通過後、TRIGGER_DESTへ向かう間はこちらを見る。
+export const TRIGGER_DEST_LOOK_TARGET = new THREE.Vector3(3, 3, 3);
  
 // 画面の「下」に見せたい向き(概念Y軸 = world +X)。upはこれを毎フレーム
 // 視線方向から直交化して求める(下のcomputeUp参照)ので、固定のup定数は持たない。
@@ -76,14 +76,14 @@ export function computeUp(forward) {
   return perp.negate().normalize(); // 「down」の逆 = up
 }
  
-export function createFinale(scene) {
+export function createTrigger(scene) {
   // ── 星本体 ──
   const star = new THREE.Mesh(
     new THREE.SphereGeometry(0.35, 12, 12),
-    new THREE.MeshBasicMaterial({ color: FINALE_COLOR })
+    new THREE.MeshBasicMaterial({ color: TRIGGER_COLOR })
   );
-  star.position.copy(FINALE_STAR_POS);
-  star.userData.isFinaleStar = true;
+  star.position.copy(TRIGGER_STAR_POS);
+  star.userData.isTriggerStar = true;
  
   // クリック判定専用の透明な大きい球(hotspots.js / axisStationOverlay.js と同じ方式)
   const hitArea = new THREE.Mesh(
@@ -95,10 +95,10 @@ export function createFinale(scene) {
  
   // ── 線A(星→原点)。growLineで伸ばすまでは非表示・長さ0 ──
   const lineAGeo = new THREE.BufferGeometry().setFromPoints([
-    FINALE_STAR_POS.clone(),
-    FINALE_STAR_POS.clone(),
+    TRIGGER_STAR_POS.clone(),
+    TRIGGER_STAR_POS.clone(),
   ]);
-  const lineA = new THREE.Line(lineAGeo, new THREE.LineBasicMaterial({ color: FINALE_COLOR }));
+  const lineA = new THREE.Line(lineAGeo, new THREE.LineBasicMaterial({ color: TRIGGER_COLOR }));
   lineA.visible = false;
   lineA.frustumCulled = false; // axes.js の xAxis と同じ理由(頂点を毎フレーム書き換えるため)
   scene.add(lineA);
@@ -111,9 +111,9 @@ export function createFinale(scene) {
   }
  
   // ── 原点付近で自動フェードインする「i」(隠しiボタンとは別インスタンス)。
-  //    今後main.js側でクリックを拾えるよう isFinaleIcon フラグを立てておく
-  //    (finale.starのuserData.isFinaleStarと同じ考え方。main.js側のクリックハンドラで
-  //    finale.js の handleIconClick() を呼び出す想定)。 ──
+  //    今後main.js側でクリックを拾えるよう isTriggerIcon フラグを立てておく
+  //    (trigger.starのuserData.isTriggerStarと同じ考え方。main.js側のクリックハンドラで
+  //    trigger.js の handleIconClick() を呼び出す想定)。 ──
   const iTexture = new THREE.TextureLoader().load(new URL('./data/eq/i-icon.png', import.meta.url).href);
   iTexture.colorSpace = THREE.SRGBColorSpace;
   const iSprite = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -126,12 +126,12 @@ export function createFinale(scene) {
   iSprite.scale.set(I_WORLD_WIDTH, I_WORLD_WIDTH * (762 / 300), 1);
   iSprite.position.set(-1, -1, -1);
   iSprite.visible = false;
-  iSprite.userData.isFinaleIcon = true;
+  iSprite.userData.isTriggerIcon = true;
   scene.add(iSprite);
 
   // ── クリック判定専用の当たり判定(見た目のiSpriteとは別)。 ──
   // hotspots.js / axisStationOverlay.js と同じ理由・同じ方式:
-  // 見た目のサイズ(I_WORLD_WIDTH=0.45)のままだと、特にカメラがFINALE_DESTへ
+  // 見た目のサイズ(I_WORLD_WIDTH=0.45)のままだと、特にカメラがTRIGGER_DESTへ
   // 離れていくにつれ画面上でどんどん小さくなり、実質クリックできなくなる。
   // material.visible=falseだと環境によってraycastが拾わないことがあるため、
   // ここでも「visible=trueのまま、ほぼ完全に透明(opacity限りなく0)」の
@@ -141,7 +141,7 @@ export function createFinale(scene) {
   // iSpriteと同じワールド位置に独立したMeshとして置き、表示切り替えのたびに
   // 手動で位置・visibleを同期させる。
   const I_HIT_RADIUS = 1.4; // 仮。axisStationOverlayのI_HIT_RADIUS(0.70)よりだいぶ広め
-                             // (iSpriteはFINALE_DESTへ離れていく間ずっとクリックできてほしいため)
+                             // (iSpriteはTRIGGER_DESTへ離れていく間ずっとクリックできてほしいため)
   const iHitArea = new THREE.Mesh(
     new THREE.SphereGeometry(I_HIT_RADIUS, 12, 12),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.001, depthWrite: false, depthTest: false })
@@ -157,7 +157,7 @@ export function createFinale(scene) {
  
   // ── フィナーレ専用のセリフ表示(dialogue.js は流用せず、captions.js の
   //    汎用コントローラーを使う)。 ──
-  // 引用(FINALE_QUOTES)は画面を四分割した右上ブロックの中央に固定表示。
+  // 引用(TRIGGER_QUOTES)は画面を四分割した右上ブロックの中央に固定表示。
   // (createCaptionBoxの既定値がそのままleft:75%/top:50%なので引数なしでOK)
   const captionEl = createCaptionBox();
   const caption = makeCaptionController(captionEl);
@@ -186,26 +186,26 @@ function nearestPointOnLine(point, start, dir) {
  
 // ── フィナーレ本編(星クリックで main.js から呼ぶ) ─────────────────
 // camera / controls / dialogue は main.js が持つインスタンスをそのまま渡す。
-// finale は createFinale() の戻り値。
+// trigger は createTrigger() の戻り値。
 // onOrigin: 原点到達の瞬間に呼ばれる(公案への切り替え等、main.js側の追加演出用フック)
-// onDone:   FINALE_DESTへの移動が終わった時点で呼ばれる(この先の続きは未実装)
-export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone }) {
+// onDone:   TRIGGER_DESTへの移動が終わった時点で呼ばれる(この先の続きは未実装)
+export function runTrigger({ camera, controls, dialogue, trigger, onOrigin, onDone }) {
   if (controls) controls.enabled = false;
  
   // dialogue引数は今回のセリフ表示には使用しない
-  // (dialogue.js への依存をやめ、自作の finale.caption / finale.koanCaption を使っているため)。
+  // (dialogue.js への依存をやめ、自作の trigger.caption / trigger.koanCaption を使っているため)。
   void dialogue;
  
   // 星クリック後も星自体は消さない(main.js 側の click ハンドラで意図せず
   // hidden にされているケースへの保険。もし main.js 側で明示的に
   // star.visible = false としている箇所があれば、そちらも合わせて削除してください)。
-  finale.star.visible = true;
+  trigger.star.visible = true;
  
-  const lineDir = ORIGIN.clone().sub(FINALE_STAR_POS).normalize(); // 星→原点の単位方向
+  const lineDir = ORIGIN.clone().sub(TRIGGER_STAR_POS).normalize(); // 星→原点の単位方向
  
-  // 現在の狙う点。線A〜原点到達まではFINALE_LOOK_TARGET、
-  // 原点通過後はarriveAtOrigin()内でFINALE_DEST_LOOK_TARGETに切り替える。
-  let currentLookTarget = FINALE_LOOK_TARGET;
+  // 現在の狙う点。線A〜原点到達まではTRIGGER_LOOK_TARGET、
+  // 原点通過後はarriveAtOrigin()内でTRIGGER_DEST_LOOK_TARGETに切り替える。
+  let currentLookTarget = TRIGGER_LOOK_TARGET;
   function lookTarget() {
     return currentLookTarget;
   }
@@ -227,21 +227,21 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
 
   // セリフ1行を右上のcaptionへ、同時に出典を右下へ反映する共通ヘルパー。
   // 空文字(最後のダミー行)のときは出典も一緒に消す。
-  function showFinaleQuote(idx) {
-    const q = NORMALIZED_FINALE_QUOTES[idx];
+  function showTriggerQuote(idx) {
+    const q = NORMALIZED_TRIGGER_QUOTES[idx];
     if (!q) return;
-    finale.caption.setText(q.text);
-    if (q.text) sourceCaption.setText(FINALE_WORK); else sourceCaption.hide();
+    trigger.caption.setText(q.text);
+    if (q.text) sourceCaption.setText(TRIGGER_WORK); else sourceCaption.hide();
   }
 
   // 1) セリフ1行目(このクリックでは1回きり)。画面四分割・右上ブロック中央のcaptionに表示。
   //    2行目以降はtravelToOrigin側で、各行のdurationが経過するたびに切り替える。
-  showFinaleQuote(0);
+  showTriggerQuote(0);
  
   // 2) カメラの自由視点を終了。まず位置はstartPosに保ったまま、向きだけを
-  //    FINALE_LOOK_TARGETへ回転させる(合流はまだしない)。
+  //    TRIGGER_LOOK_TARGETへ回転させる(合流はまだしない)。
   const startPos = camera.position.clone();
-  const nearest = nearestPointOnLine(startPos, FINALE_STAR_POS, lineDir);
+  const nearest = nearestPointOnLine(startPos, TRIGGER_STAR_POS, lineDir);
  
   rotateToLookTarget();
  
@@ -272,21 +272,21 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
   }
  
   function growLine() {
-    finale.lineA.visible = true;
+    trigger.lineA.visible = true;
     const p = { t: 0 };
     gsap.to(p, {
       t: 1,
       duration: LINE_GROW_DURATION,
       ease: 'power1.out',
       onUpdate: () => {
-        finale.setLineAEnd(FINALE_STAR_POS.clone().lerp(ORIGIN, p.t));
+        trigger.setLineAEnd(TRIGGER_STAR_POS.clone().lerp(ORIGIN, p.t));
       },
       onComplete: mergeToLine,
     });
   }
  
   // 線Aが伸び終わったあと、カメラの位置を線A上の最寄り点(nearest)へ合流させる。
-  // 向きは合流中もFINALE_LOOK_TARGETを見続ける(applyLookAtで毎フレーム再計算)。
+  // 向きは合流中もTRIGGER_LOOK_TARGETを見続ける(applyLookAtで毎フレーム再計算)。
   function mergeToLine() {
     const mergeProgress = { t: 0 };
     gsap.to(mergeProgress, {
@@ -304,19 +304,19 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
   function travelToOrigin() {
     // 最寄り点から原点までの距離を、星の実位置からのフル距離に対する比率で
     // FULL_TRAVEL_DURATIONに換算する(経路が短ければ早く終わる)
-    const fullDist = FINALE_STAR_POS.length();
+    const fullDist = TRIGGER_STAR_POS.length();
     const remainDist = nearest.length();
     const duration = FULL_TRAVEL_DURATION * (remainDist / fullDist);
  
     // 引用を順番に切り替える(行ごとのdurationに従う)。経路が短くて全部出し切れなくても、
-    // ここではclearしない(最後の点=FINALE_DESTに到達するまで右上のセリフ表示を続けたいため)。
-    let quoteIdx = 0; // 0番目は上(showFinaleQuote(0))で表示済み
+    // ここではclearしない(最後の点=TRIGGER_DESTに到達するまで右上のセリフ表示を続けたいため)。
+    let quoteIdx = 0; // 0番目は上(showTriggerQuote(0))で表示済み
     function scheduleNextQuote() {
-      const current = NORMALIZED_FINALE_QUOTES[quoteIdx];
+      const current = NORMALIZED_TRIGGER_QUOTES[quoteIdx];
       quoteTimer = setTimeout(() => {
         quoteIdx++;
-        if (quoteIdx < NORMALIZED_FINALE_QUOTES.length) {
-          showFinaleQuote(quoteIdx);
+        if (quoteIdx < NORMALIZED_TRIGGER_QUOTES.length) {
+          showTriggerQuote(quoteIdx);
           scheduleNextQuote();
         } else {
           quoteTimer = null;
@@ -334,25 +334,25 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
         camera.position.lerpVectors(nearest, ORIGIN, p.t);
         applyLookAt();
         // 原点付近で「i」を自動フェードイン(クリック不要)
-        if (p.t > 0.85 && !finale.iSprite.visible) {
-          finale.iSprite.visible = true;
-          finale.iHitArea.visible = true; // ← 見た目と同時にクリック判定も有効化
-          gsap.to(finale.iSprite.material, { opacity: 1, duration: 1.2, ease: 'power2.out' });
+        if (p.t > 0.85 && !trigger.iSprite.visible) {
+          trigger.iSprite.visible = true;
+          trigger.iHitArea.visible = true; // ← 見た目と同時にクリック判定も有効化
+          gsap.to(trigger.iSprite.material, { opacity: 1, duration: 1.2, ease: 'power2.out' });
         }
       },
       onComplete: () => {
-        // ここではquoteTimerを止めない。セリフは最後の点(FINALE_DEST)到達まで表示を続ける。
+        // ここではquoteTimerを止めない。セリフは最後の点(TRIGGER_DEST)到達まで表示を続ける。
         arriveAtOrigin();
       },
     });
   }
  
   function arriveAtOrigin() {
-    // 4) 原点到達で瞬時に反転(=以後FINALE_DESTへ進む)。カメラは常に固定点を見続ける。
-    currentLookTarget = FINALE_DEST_LOOK_TARGET; // ここでlookTargetを切り替えないとFINALE_DESTへの移動中も(0,-1,-1)を見続けてしまう
+    // 4) 原点到達で瞬時に反転(=以後TRIGGER_DESTへ進む)。カメラは常に固定点を見続ける。
+    currentLookTarget = TRIGGER_DEST_LOOK_TARGET; // ここでlookTargetを切り替えないとTRIGGER_DESTへの移動中も(0,-1,-1)を見続けてしまう
     if (onOrigin) onOrigin();
-    finale.updateKoanScreenPosition(camera); // 表示前に投影位置を計算しておく
-    finale.koanCaption.setText(KOAN_TEXT); // 以前と同じ、3D固定点(koanAnchor)に追従する表示に戻す
+    trigger.updateKoanScreenPosition(camera); // 表示前に投影位置を計算しておく
+    trigger.koanCaption.setText(KOAN_TEXT); // 以前と同じ、3D固定点(koanAnchor)に追従する表示に戻す
     travelToDest();
   }
  
@@ -363,22 +363,22 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
       duration: Y_AXIS_TRAVEL_DURATION,
       ease: 'power1.inOut',
       onUpdate: () => {
-        camera.position.lerpVectors(ORIGIN, FINALE_DEST, p.t);
+        camera.position.lerpVectors(ORIGIN, TRIGGER_DEST, p.t);
         applyLookAt(); // 視覚的には後ろ向きに進む
-        finale.updateKoanScreenPosition(camera); // カメラが動く間、koanAnchorの投影位置に文字を追従させる
+        trigger.updateKoanScreenPosition(camera); // カメラが動く間、koanAnchorの投影位置に文字を追従させる
       },
       onComplete: () => {
-        // 最後の点(FINALE_DEST)に到達したので、ここでまとめて片付ける
+        // 最後の点(TRIGGER_DEST)に到達したので、ここでまとめて片付ける
         if (quoteTimer) {
           clearTimeout(quoteTimer);
           quoteTimer = null;
         }
-        finale.caption.hide(); // 右上の引用セリフはここまで表示を続け、最後の点到達で消す
+        trigger.caption.hide(); // 右上の引用セリフはここまで表示を続け、最後の点到達で消す
         // 右上の引用が消えるので、その出典(Catcher in the Rye)も外し、代わりに
         // 残り続ける公案の出典(Nine Stories のエピグラフ)を右下に表示する。
         // (公案はiクリック時のhandleIconClickで消えるので、出典もそこで一緒に消える)
         sourceCaption.setText(KOAN_WORK);
-        finale.lineA.visible = false; // Y軸側(FINALE_DEST)に到達したら緑の線Aを消す
+        trigger.lineA.visible = false; // Y軸側(TRIGGER_DEST)に到達したら緑の線Aを消す
         if (onDone) onDone();
       },
     });
@@ -386,17 +386,11 @@ export function runFinale({ camera, controls, dialogue, finale, onOrigin, onDone
 }
  
 // ── iクリック後のフック ─────────────────────────────
-// フィナーレ本編(星→原点→FINALE_DEST)の続き。iをクリックした瞬間に、
-// それまで出ていたセリフ(引用・公案どちらも)を即座に消す。
-// この先の「X軸/原点から文字が登場して軸上を移動し、iが軸の色に変化しながら文字と衝突、
-// 最終的に方程式が完成する」という次のモーションは、まだ具体的に設計していない。
-// 今はそのための入口(onNextPhaseフック)だけ用意しておき、詳細は別途詰める。
-// main.js側でiSprite(userData.isFinaleIcon)へのクリックを検知したら、この関数を呼ぶ想定。
-export function handleIconClick({ finale, onNextPhase }) {
-  finale.caption.hide();
-  finale.koanCaption.hide();
+export function handleIconClick({ trigger, onNextPhase }) {
+  trigger.caption.hide();
+  trigger.koanCaption.hide();
   getSourceCaption().hide(); // 引用の出典(右下)も念のため一緒に閉じる
-  finale.iHitArea.visible = false; // クリック済みなので判定は閉じる(見た目のiSprite自体は次の演出側で制御)
+  trigger.iHitArea.visible = false; // クリック済みなので判定は閉じる(見た目のiSprite自体は次の演出側で制御)
  
   // 次のモーション(未設計)へのフック。呼び出し側で用意されていれば呼ぶだけ。
   if (onNextPhase) onNextPhase();
