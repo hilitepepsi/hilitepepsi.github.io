@@ -22,18 +22,18 @@ import {
 //
 // 配置はすべて「=」記号を共通の原点とした絶対座標(マスター画像換算px)で管理する。
 // 3枚の完成equation画像(2pi-equation.png/carousel.png/final.png)はそれぞれ縮尺が違う
-// (PHASE3_IMAGE_SCALE参照)ので、各画像内の「=」の実測位置を基準に、
+// (PHASE2_IMAGE_SCALE参照)ので、各画像内の「=」の実測位置を基準に、
 // (raw - その画像のequals中心)/その画像のscale + マスターのequals中心
 // という変換で、全ステージを同じ「マスター座標」に正規化している。
 // こうすることで、Phase1のi・ħの静止位置(MASTER_BBOX.i/hbarから直接計算できる)と、
 // ②③④での位置を同じ物差しで比較・補間できる。
 
-// PHASE3_ASSETS: 5アセット構成(合成グリフではなく、i・hを個別スプライトのまま
+// PHASE2_ASSETS: 5アセット構成(合成グリフではなく、i・hを個別スプライトのまま
 // 重ねて表示する方式。詳細はtransitionToStage4のコメント参照)。
 // ── 2026-08-16 再計測: 元画像(2pi.png/carousel_equation.png/final.png)から
 // 白文字・透過背景で切り抜き直したため、canvas(切り抜きPNGのピクセルサイズ)を
 // 実測値に更新した。以前の値は元画像が失われる前の暫定値。
-export const PHASE3_ASSETS = {
+export const PHASE2_ASSETS = {
   h2:        { url: new URL('./data/eq/h_v2.png', import.meta.url).href,          canvas: [813, 1089] },
   twoPi:     { url: new URL('./data/eq/twopi.png', import.meta.url).href,          canvas: [1552, 1053] },
   barTwoPi:  { url: new URL('./data/eq/bar_2pi.png', import.meta.url).href,        canvas: [1712, 182] },
@@ -42,7 +42,7 @@ export const PHASE3_ASSETS = {
 };
 
 // 元画像1pxをワールド空間で何ユニットにするか(Phase1のEQUATION_SCALEをそのまま流用)。
-export const PHASE3_SCALE = EQUATION_SCALE;
+export const PHASE2_SCALE = EQUATION_SCALE;
 
 // ── 実測スケール補正(重要) ──────────────────────────
 // 今回渡された3枚の完成equation画像(2pi-equation.png/carousel.png/final.png)は、
@@ -59,16 +59,16 @@ export const PHASE3_SCALE = EQUATION_SCALE;
 //   stage4 (final.png):            ∂ψ/∂t実測 1440×2406px → 同 0.7770倍
 // (2026-08-16: 元画像から再計測した値に更新。連結成分検出による自動計測で、
 //  幅比・高比の誤差はいずれも0.2%未満で一致している)
-const PHASE3_IMAGE_SCALE = {
+const PHASE2_IMAGE_SCALE = {
   stage2: 0.8751,
   stage3: 0.7314,
   stage4: 0.7770,
 };
 
-// PHASE3_ASSETSの各キーが、どのステージ画像から切り出されたか
-// (=どのPHASE3_IMAGE_SCALEで補正すべきか)のマップ。
+// PHASE2_ASSETSの各キーが、どのステージ画像から切り出されたか
+// (=どのPHASE2_IMAGE_SCALEで補正すべきか)のマップ。
 // carousel/barWideはstage4(final.png)でも再利用するが、切り出し元はstage3(carousel.png)。
-const PHASE3_ASSET_SOURCE_STAGE = {
+const PHASE2_ASSET_SOURCE_STAGE = {
   h2: 'stage2',
   twoPi: 'stage2',
   barTwoPi: 'stage2',
@@ -78,15 +78,15 @@ const PHASE3_ASSET_SOURCE_STAGE = {
 
 // 元画像固有のpx値を、「マスター画像(S_equation-1.png)換算のpx値」に変換する。
 function toMasterPx(px, stageKey) {
-  return px / PHASE3_IMAGE_SCALE[stageKey];
+  return px / PHASE2_IMAGE_SCALE[stageKey];
 }
 
-export function phase3SymbolWorldSize(key) {
-  const asset = PHASE3_ASSETS[key];
-  const stageKey = PHASE3_ASSET_SOURCE_STAGE[key];
+export function phase2SymbolWorldSize(key) {
+  const asset = PHASE2_ASSETS[key];
+  const stageKey = PHASE2_ASSET_SOURCE_STAGE[key];
   return {
-    width: toMasterPx(asset.canvas[0], stageKey) * PHASE3_SCALE,
-    height: toMasterPx(asset.canvas[1], stageKey) * PHASE3_SCALE,
+    width: toMasterPx(asset.canvas[0], stageKey) * PHASE2_SCALE,
+    height: toMasterPx(asset.canvas[1], stageKey) * PHASE2_SCALE,
   };
 }
 
@@ -96,14 +96,14 @@ export function phase3SymbolWorldSize(key) {
 // ★2026-08-16 修正: 切り出したPNG(barTwoPi/barWide)は、インクの周囲に
 // 余白(パディング)を持たせてクロップしている。THREE.Spriteのscale.xは
 // キャンバス全体(余白込み)の幅に対応するため、単純に
-// toMasterPx(widthPx)*PHASE3_SCALE をscale.xへ入れると、
+// toMasterPx(widthPx)*PHASE2_SCALE をscale.xへ入れると、
 // 「インク部分の見た目の幅」が意図した長さより
 // (widthPx / canvas幅)倍だけ短くなってしまっていた
 // (carousel用バーで実測: 2505/2905 ≈ 86%の長さしかなかった)。
 // キャンバス幅とインク幅の比率で逆補正し、インク部分が正しい長さになるようにする。
 function fractionBarWorldWidth(widthPx, stageKey, assetKey) {
-  const canvasPx = PHASE3_ASSETS[assetKey].canvas[0];
-  const targetInkWorldWidth = toMasterPx(widthPx, stageKey) * PHASE3_SCALE;
+  const canvasPx = PHASE2_ASSETS[assetKey].canvas[0];
+  const targetInkWorldWidth = toMasterPx(widthPx, stageKey) * PHASE2_SCALE;
   return targetInkWorldWidth * (canvasPx / widthPx);
 }
 
@@ -178,7 +178,7 @@ const STAGE_RAW_CENTERS = {
 function stageCenterToMasterPx(stageKey, partKey) {
   const raw = STAGE_RAW_CENTERS[stageKey][partKey];
   const eq = STAGE_EQUALS_RAW[stageKey];
-  const scale = PHASE3_IMAGE_SCALE[stageKey];
+  const scale = PHASE2_IMAGE_SCALE[stageKey];
   return {
     x: (raw.x - eq.x) / scale + EQUALS_MASTER.x,
     y: (raw.y - eq.y) / scale + EQUALS_MASTER.y,
@@ -215,7 +215,7 @@ function localOffsetToWorld(rx, ry, vertexWorld, frame) {
 }
 
 // Ĥ・ħ・iなど他の記号と同じ白トーンに揃える(phase1.js側のSYMBOL_COLOR_OVERRIDES.hbarと同値)。
-const PHASE3_COLOR = 0xffffff;
+const PHASE2_COLOR = 0xffffff;
 
 // HBARの上線(バー)が外れて分数の横線として現れる瞬間だけ使う、一時的な赤フラッシュ色。
 // ★重要: 通常のsRGB色(0〜1に収まる値)はUnrealBloomPassの輝度しきい値(TUNE.bloomThreshold)
@@ -234,7 +234,7 @@ const PHASE3_COLOR = 0xffffff;
 //   閾値さえ超えていれば消えない。上げるほど逆に白く/ピンクに寄っていく)。
 const BAR_DETACH_FLASH_COLOR = new THREE.Color(5.4, 0, 0);
 // 通常時の白(0xffffff = r,g,b各1.0)。バー本体が普段まとっている明るさに戻すための着地点。
-const PHASE3_COLOR_NORMALIZED = new THREE.Color(PHASE3_COLOR);
+const PHASE2_COLOR_NORMALIZED = new THREE.Color(PHASE2_COLOR);
 
 // hbar.png内の「横棒(マクロン)」部分の実測ピクセル座標(画像原寸そのもの、y=0が画像上端)。
 // アルファ値を閾値10で二値化し、行ごとの横幅プロファイルから「周囲の縦棒(幅約124px)より
@@ -257,7 +257,7 @@ function ensureHbarBarGlowOverlay(hbarSprite) {
   const map = hbarSprite.material.map;
   const img = map.image;
   if (!img || !img.complete || !img.naturalWidth) {
-    console.warn('ensureHbarBarGlowOverlay: hbar.pngがまだ読み込み中です。Phase3開始時点では読み込み済みのはずなので、呼び出しタイミングを確認してください。');
+    console.warn('ensureHbarBarGlowOverlay: hbar.pngがまだ読み込み中です。Phase2開始時点では読み込み済みのはずなので、呼び出しタイミングを確認してください。');
   }
   const imgW = img.naturalWidth;
   const imgH = img.naturalHeight;
@@ -295,36 +295,36 @@ function ensureHbarBarGlowOverlay(hbarSprite) {
   return overlay;
 }
 
-const phase3TextureLoader = new THREE.TextureLoader();
+const phase2TextureLoader = new THREE.TextureLoader();
 
-function makePhase3Sprite(key) {
-  const asset = PHASE3_ASSETS[key];
-  const texture = phase3TextureLoader.load(asset.url);
+function makePhase2Sprite(key) {
+  const asset = PHASE2_ASSETS[key];
+  const texture = phase2TextureLoader.load(asset.url);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.generateMipmaps = false;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   const material = new THREE.SpriteMaterial({
     map: texture,
-    color: PHASE3_COLOR,
+    color: PHASE2_COLOR,
     transparent: true,
     depthWrite: false,
     opacity: 0,
   });
   const sprite = new THREE.Sprite(material);
-  const { width, height } = phase3SymbolWorldSize(key);
+  const { width, height } = phase2SymbolWorldSize(key);
   sprite.scale.set(width, height, 1);
   sprite.visible = false;
   sprite.userData.symbolKey = key;
   return sprite;
 }
 
-// createEquationAssembly()から一度だけ呼ぶ。Phase3用の6スプライトを作ってsceneに追加する。
-// 戻り値はassembly.phase3としてぶら下げる想定。
-export function createPhase3Assets(scene) {
+// createEquationAssembly()から一度だけ呼ぶ。Phase2用の6スプライトを作ってsceneに追加する。
+// 戻り値はassembly.phase2としてぶら下げる想定。
+export function createPhase2Assets(scene) {
   const sprites = {};
-  for (const key of Object.keys(PHASE3_ASSETS)) {
-    const sprite = makePhase3Sprite(key);
+  for (const key of Object.keys(PHASE2_ASSETS)) {
+    const sprite = makePhase2Sprite(key);
     scene.add(sprite);
     sprites[key] = sprite;
   }
@@ -352,8 +352,8 @@ const STAGE_TRANSITION = {
 // ⑴ i・hbar(ħ)を「左へ」移動させる(この時点ではまだ見た目は変わらない。yは触らない)。
 // ⑵ hbarが上昇しながらhへクロスフェードし、同時にバーが伸び、2πがフェードインする。
 function transitionToStage2({ assembly, frame, onComplete }) {
-  const p3 = assembly.phase3;
-  const vertexWorld = assembly.__phase3VertexWorld; // startPhase3側で保存
+  const p3 = assembly.phase2;
+  const vertexWorld = assembly.__phase2VertexWorld; // startPhase2側で保存
   const hbarSprite = assembly.sprites.hbar;
   const iSprite = assembly.sprites.i;
 
@@ -452,9 +452,9 @@ function transitionToStage2({ assembly, frame, onComplete }) {
     gsap.timeline()
       .to(barGlowOverlay.material, { opacity: 1, duration: 0.35, ease: 'power1.out' })
       .to(barGlowOverlay.material.color, {
-        r: PHASE3_COLOR_NORMALIZED.r,
-        g: PHASE3_COLOR_NORMALIZED.g,
-        b: PHASE3_COLOR_NORMALIZED.b,
+        r: PHASE2_COLOR_NORMALIZED.r,
+        g: PHASE2_COLOR_NORMALIZED.g,
+        b: PHASE2_COLOR_NORMALIZED.b,
         duration: 0.45,
         ease: 'power1.in',
       }, '<') // 発光開始と同時に赤→白の冷却を始める(光ってから消えるまでの間ずっと白へ近づいていく)
@@ -510,8 +510,8 @@ function setSpriteMirrored(sprite, mirrored) {
 }
 
 function transitionToStage3({ assembly, frame, onComplete }) {
-  const p3 = assembly.phase3;
-  const vertexWorld = assembly.__phase3VertexWorld;
+  const p3 = assembly.phase2;
+  const vertexWorld = assembly.__phase2VertexWorld;
   const iSprite = assembly.sprites.i;
 
   const hSprite = p3.sprites.h2;
@@ -578,13 +578,13 @@ function transitionToStage3({ assembly, frame, onComplete }) {
       // Spriteはscale.xの符号を無視するため、反転自体はsetSpriteMirrored()で別途行う)。
       const cosAngle = Math.cos(angle);
       const twoPiSquash = Math.abs(cosAngle);
-      twoPiSprite.scale.x = phase3SymbolWorldSize('twoPi').width * twoPiSquash;
+      twoPiSprite.scale.x = phase2SymbolWorldSize('twoPi').width * twoPiSquash;
       // 90°〜270°(cos(angle)が負の区間)は鏡映画像として見せる=「2πが裏返る」演出。
       setSpriteMirrored(twoPiSprite, cosAngle < 0);
 
       // carouselは270°〜360°の区間(cos(angle)は0→1で常に非負)にしか見せないため反転不要。
       const carouselSquash = Math.abs(cosAngle);
-      carouselSprite.scale.x = phase3SymbolWorldSize('carousel').width * carouselSquash;
+      carouselSprite.scale.x = phase2SymbolWorldSize('carousel').width * carouselSquash;
       // 切り替えタイミングを180°(t=0.5)→270°(t=0.75)に変更:
       // 2πを270°まで見せ(90°〜270°は反転した状態で見える)、残り90°でCarouselに差し替える。
       if (spinState.t < 0.75) {
@@ -598,10 +598,10 @@ function transitionToStage3({ assembly, frame, onComplete }) {
     onComplete: () => {
       twoPiSprite.visible = false;
       twoPiSprite.rotation.z = 0;
-      twoPiSprite.scale.x = phase3SymbolWorldSize('twoPi').width;
+      twoPiSprite.scale.x = phase2SymbolWorldSize('twoPi').width;
       setSpriteMirrored(twoPiSprite, false); // 次回(Phase4循環時)のために鏡映状態を必ずリセット
       carouselSprite.rotation.z = 0;
-      carouselSprite.scale.x = phase3SymbolWorldSize('carousel').width;
+      carouselSprite.scale.x = phase2SymbolWorldSize('carousel').width;
       carouselSprite.material.opacity = 1;
     },
   }, moveDuration); // ← ⑴の終了時刻から開始(=完全に順番。同時発生させない)
@@ -624,8 +624,8 @@ function transitionToStage3({ assembly, frame, onComplete }) {
 //   そのまま個別スプライトとして重ねて表示する(合成アセットは実測値同士の
 //   わずかな誤差で着地の瞬間だけ絵柄がすり替わって見えてしまうため不採用)。──
 function transitionToStage4({ assembly, frame, onComplete }) {
-  const p3 = assembly.phase3;
-  const vertexWorld = assembly.__phase3VertexWorld;
+  const p3 = assembly.phase2;
+  const vertexWorld = assembly.__phase2VertexWorld;
   const iSprite = assembly.sprites.i; // ここまでstage3の位置にいる「i」
   const hSprite = p3.sprites.h2;
   const carouselSprite = p3.sprites.carousel;
@@ -654,7 +654,7 @@ function transitionToStage4({ assembly, frame, onComplete }) {
   //   明確に区切られた順番に変更。
   const hopStartTime = hMove;
   const hopPeak = { t: 0 };
-  const arcHeight = phase3SymbolWorldSize('h2').height * 0.5;
+  const arcHeight = phase2SymbolWorldSize('h2').height * 0.5;
   tl.to(hopPeak, {
     t: 1,
     duration: hop,
@@ -675,12 +675,12 @@ function transitionToStage4({ assembly, frame, onComplete }) {
   tl.to(barSprite.position, { x: barTarget.x, y: barTarget.y, z: barTarget.z, duration: merge, ease: 'power2.out' }, landTime);
 }
 
-// ── Phase3オーケストレーション本体 ──────────────────────
+// ── Phase2オーケストレーション本体 ──────────────────────
 // 数式(完成した①iħ∂ψ/∂t=Ĥψ)をクリックした瞬間にmain.jsから一度だけ呼ぶ。
 // ②→③→④を自動で連続再生する(ドキュメントの「クリックで自動変化開始」)。
 // onStageChange(stageName)は各ステージに切り替わった瞬間に呼ばれる(効果音やログ用、任意)。
-export function startPhase3({ assembly, camera, onStageChange, onComplete }) {
-  const p3 = assembly.phase3;
+export function startPhase2({ assembly, camera, onStageChange, onComplete }) {
+  const p3 = assembly.phase2;
   if (!p3 || p3.busy || p3.stage !== 'hbar') return;
   p3.busy = true;
 
@@ -694,9 +694,9 @@ export function startPhase3({ assembly, camera, onStageChange, onComplete }) {
   // paddingCorrection分だけキャンバスをずらして配置している
   // (= 結果としてスプライト位置はインク中心から上にズレている)。
   //
-  // Phase3側の全計算(stagePartWorld・EQUALS_MASTER・STAGE_EQUALS_RAW)は
+  // Phase2側の全計算(stagePartWorld・EQUALS_MASTER・STAGE_EQUALS_RAW)は
   // 「=」のインク中心そのものを基準線(オフセット0)とみなして設計されているため、
-  // このズレがPhase3のi・h・バー・分母すべてに一律に伝播し、
+  // このズレがPhase2のi・h・バー・分母すべてに一律に伝播し、
   // derivativeのバーと高さが合わない/iが移動中に浮き上がって見える原因になっていた。
   //
   // ここでequals自身のpaddingCorrectionを逆算して差し引き、真のインク中心
@@ -712,7 +712,7 @@ export function startPhase3({ assembly, camera, onStageChange, onComplete }) {
   const vertexWorld = assembly.sprites.equals.position.clone()
     .addScaledVector(frame.right, -equalsPaddingCorrection.x)
     .addScaledVector(frame.up, -equalsPaddingCorrection.y);
-  assembly.__phase3VertexWorld = vertexWorld;
+  assembly.__phase2VertexWorld = vertexWorld;
 
   transitionToStage2({
     assembly, frame,
@@ -739,10 +739,10 @@ export function startPhase3({ assembly, camera, onStageChange, onComplete }) {
   });
 }
 
-// TODO(Phase3):
+// TODO(Phase2):
 //   - STAGE_RAW_CENTERS/STAGE_EQUALS_RAWは3枚の完成画像から実測した値。「=」を共通原点に
-//     PHASE3_IMAGE_SCALEで画像ごとの縮小率を補正しているので、Ĥ・ψ・derivativeとの
-//     サイズ・位置の整合性は取れているはず。ズレが残る場合はPHASE3_IMAGE_SCALEまたは
+//     PHASE2_IMAGE_SCALEで画像ごとの縮小率を補正しているので、Ĥ・ψ・derivativeとの
+//     サイズ・位置の整合性は取れているはず。ズレが残る場合はPHASE2_IMAGE_SCALEまたは
 //     STAGE_RAW_CENTERS/STAGE_EQUALS_RAWの実測値を見直してください。
 //   - ⑶(②→③)で「i, h/2π」がさらに左へ動く量・タイミングは実測ベースだが、
 //     見た目のスピード感(moveDuration/spinDurationとの前後関係)はまだ仮。
