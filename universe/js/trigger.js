@@ -44,7 +44,7 @@ const KOAN_WORK = 'Nine Stories (epigraph)';
 const WAIT_BEFORE_GROW = 3.0;       // クリック直後、最寄り点への合流アニメが終わってからの待機
 const SNAP_DURATION = 1.6;          // 星クリック直後、カメラが線A上の最寄り点へ寄っていく時間
 const LINE_GROW_DURATION = 3.0;     // 線Aが星→原点へ伸びる時間
-const FULL_TRAVEL_DURATION = 1.0;  // 星の実位置からのフル距離を移動する場合の合計秒数
+const FULL_TRAVEL_DURATION = 30.0;  // 星の実位置からのフル距離を移動する場合の合計秒数
 const Y_AXIS_TRAVEL_DURATION = 6.0; // 原点 → 次の目的地への移動時間
  
 const ORIGIN = new THREE.Vector3(0, 0, 0);
