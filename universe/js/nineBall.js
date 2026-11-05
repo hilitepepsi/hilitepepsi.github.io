@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createBackButton, createReplayButton } from './iconButton.js';
-import { getSourceCaption } from './captions.js'; // 作品名(出典)は共有の右下ボックスに出す(hotspotsのworkと同じ)
+import { getSourceCaption, renderRichText } from './captions.js'; // 作品名(出典)は共有の右下ボックスに出す(hotspotsのworkと同じ)
 
 // ── ビリヤード台オーバーレイ(Nine Ball Break Cosmos) ─────────────────────
 // ユーザー提供の参考実装(nine_ball_break_cosmos.html)をほぼそのまま移植したもの。
@@ -434,22 +434,30 @@ export function createNineBall(opts = {}) {
      セリフが浮かぶ
   --------------------------------------------------------------- */
   const CUE_QUOTES = [
-    { text: 'Pool. I’ll have to discuss another time. It wasn’t just a game with us, it was almost a Protestant Reformation.\n—Buddy', work: 'Seymour: an Introduction' },
-    { text: 'We shot pool before or after almost every important crisis of our young manhood.\n—Buddy', work: 'Seymour: an introduction' },
+    { text: 'Pool. I’ll have to discuss another time. It wasn’t just a game with us, it was almost a Protestant Reformation.', work: 'Seymour: an Introduction' },
+    { text: 'We shot pool before or after almost every important crisis of our young manhood.', work: 'Seymour: an introduction' },
   ];
   // 1〜9番ボール用の残り5セット
   const BALL_QUOTES = [
-    [{ text: 'The Ocean Full of Bowling Balls', work: '' }],
-    [{ text: 'opened a heavy metal door that read:\nTO THE POOL.\n—Teddy', work: 'Teddy' }],
-    [{ text: 'But if you get on the other side, where there aren’t any hot-shots, then what’s a game about it?\n—Holden', work: 'The Catcher in the Rye' },
-     { text: 'Life is a game', work: 'The Catcher in the Rye' }],
-     [{ text: 'I went down near the lagoon and I sort of skipped the quarters and the nickel across it,', work: 'The Catcher in the Rye' }],
-    [{ text: 'He would be all smiles when he heard a responsive click of glass striking glass\n—Buddy', work: 'Seymour: an Introduction' },
-    ],
-    [{ text: 'One of us will be present at the other chap’s departure for various reasons.\n—Seymour', work: 'Hapworth 16, 1924' }],
-    [{ text: 'It never appeared to be clear to him whose winning click it was.\n—Buddy', work: 'Seymour: an Introduction' }],
-    [{ text: 'A man walks along the beach and unfortunately gets hit in the head by a cocoanut.\n—Teddy', work: 'Teddy' }],
-    [{ text: 'I guess I thought it’d take my mind off getting pneumonia and dying. It didn’t, though.', work: 'The Catcher in the Rye' }]
+    [{ text: 'but it never appeared to be clear to him *whose* winning click it was.', work: 'Seymour: an Introduction' },
+     { text: 'He would be all smiles when he heard a responsive click of glass striking glass', work: 'Seymour: an Introduction' }], //1
+
+    [{ text: '*The Ocean Full of Bowling Balls*', work: '' }], //2
+
+    [{ text: 'One of us will be present at the other chap’s departure for various reasons.', work: 'Hapworth 16, 1924' }], //3
+    
+    [{ text: 'I went down near the lagoon and I sort of skipped the quarters and the nickel across it,', work: 'The Catcher in the Rye' },
+     { text: 'I guess I thought it’d take my mind off getting pneumonia and dying. It didn’t, though.', work: 'The Catcher in the Rye' }], //4F
+
+    [{ text: 'But if you get on the other side, where there aren’t any hot-shots, then what’s a game about it?', work: 'The Catcher in the Rye' }, 
+     { text: 'Life is a game', work: 'The Catcher in the Rye' }], //5F
+     
+    [{ text: 'One of us will be present at the other chap’s departure for various reasons.', work: 'Hapworth 16, 1924' }], //6
+
+    [{ text: 'One of us will be present at the other chap’s departure for various reasons.', work: 'Hapworth 16, 1924' }], //7
+
+    [{ text: 'A man walks along the beach and unfortunately gets hit in the head by a cocoanut.', work: 'Teddy' }], //8
+    [{ text: 'opened a heavy metal door that read:\nTO THE POOL.', work: 'Teddy' }], //9
   ];
   // 1〜9番ボールに、上の5セットを順番に(足りない分は繰り返して)割り当てる
   function quotesForBallNumber(num){
@@ -541,7 +549,7 @@ export function createNineBall(opts = {}) {
 
   function showBallQuote(quote, ballMesh) {
     const q = typeof quote === 'string' ? { text: quote, work: '' } : quote;
-    ballDialogueEl.textContent = q.text;
+    renderRichText(ballDialogueEl, q.text); // *...* で囲んだ部分だけイタリックにする(hotspotsのセリフと同じ処理)
     // 作品名は他の出典と同じ右下の共有ボックスへ(空なら消す)
     const sourceCaption = getSourceCaption();
     if (q.work) sourceCaption.setText(q.work); else sourceCaption.hide();
