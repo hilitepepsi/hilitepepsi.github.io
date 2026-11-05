@@ -9,7 +9,7 @@
 //   captions.js     … 画面に流すセリフ・ワンフレーズのDOM制御(THREE非依存)
 //   zoom.js         … 数式クリック時のカメラズーム
 //   phase1.js       … ①(iħ∂ψ/∂t=Ĥψ)が組み上がるまでの演出・星の収束
-//   phase3.js       … ②③④(カルーセル)の段階遷移演出
+//   phase2.js       … ②③④(カルーセル)の段階遷移演出
 //
 // ★ 設計方針(ワールド空間方式。camera.add方式からの全面書き直し):
 // 記号も星(stars.js)も、**全部ワールド空間の同じ1つの座標系**に置く。カメラの子にはしない。
@@ -45,9 +45,9 @@ export {
 } from './phase1.js';
 
 export {
-  PHASE3_ASSETS,
-  PHASE3_SCALE,
-  phase3SymbolWorldSize,
-  createPhase3Assets,
-  startPhase3,
-} from './phase3.js';
+  PHASE2_ASSETS,
+  PHASE2_SCALE,
+  phase2SymbolWorldSize,
+  createPhase2Assets,
+  startPhase2,
+} from './phase2.js';
