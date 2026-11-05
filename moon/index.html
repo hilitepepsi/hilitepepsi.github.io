@@ -1332,7 +1332,7 @@ function drawBmc(ctx, cx, cy, size){
 function drawMail(ctx, cx, cy, size, mode){
   const w = size, h = size * 0.72, x = cx - w/2, y = cy - h/2;
   ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  if (mode === 'star'){ ctx.strokeStyle = INK; ctx.lineWidth = size * 0.09; }
+  if (mode === 'ink'){ ctx.strokeStyle = INK; ctx.lineWidth = size * 0.03; }   // 白い球の上に載せる用
   else {
     ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = size * 0.03;   // 細く控えめに
     if (mode === 'hover'){ ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.fillRect(x, y, w, h); }
@@ -1351,7 +1351,7 @@ const MOON_LINKS = [
   { name:'Email',           url:'mailto:you@example.com',     color:'#f2c14e', ink:'#ffffff', yaw:160, pitch:10, draw:drawMail }, // 裏側
 ];
 
-// mode: 'sticker' 月面 / 'hover' ホバー時 / 'star' スマホ用の色付きの星(ブランド色のにじみ付き)
+// mode: 'sticker' 月面(白い線) / 'hover' ホバー時(内側も白) / 'ink' 淡い黒の線(白い球用)
 function buildLinkTexture(link, mode){
   const S = 256, c = S / 2;
   const cv = document.createElement('canvas'); cv.width = cv.height = S;
@@ -1360,18 +1360,7 @@ function buildLinkTexture(link, mode){
   tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
   const paint = () => {
     ctx.clearRect(0, 0, S, S);
-    if (mode === 'star'){
-      const g = ctx.createRadialGradient(c, c, S*0.2, c, c, S/2);
-      g.addColorStop(0, link.color + 'cc'); g.addColorStop(1, link.color + '00');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
-      const r = S * 0.3;
-      ctx.beginPath(); ctx.arc(c, c, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#ece3cf'; ctx.fill();
-      ctx.lineWidth = 9; ctx.strokeStyle = link.color; ctx.stroke();
-      link.draw(ctx, c, c, r * 1.15, 'star');
-    } else {
-      link.draw(ctx, c, c, S * 0.8, mode);   // 背景なし: ロゴだけを月面に直接プリント
-    }
+    link.draw(ctx, c, c, S * 0.8, mode);   // 背景なし: ロゴだけ
     tex.needsUpdate = true;
   };
   paint(); linkRepaints.push(paint);
@@ -1382,9 +1371,23 @@ const STICKER_RADIUS = 0.42;
 const MOON_STAR_Z = -MOON_RADIUS * 1.6;           // 星は月の後ろ側を漂う
 const moonStarExtent = { ax:3, ay:5 };             // 漂う範囲(fitMoonCameraで画面に合わせて更新)
 const STAR_MOTION = [ {w1:.16,w2:.11,p1:0,p2:1.2}, {w1:.13,w2:.15,p1:2.1,p2:.4}, {w1:.19,w2:.09,p1:4.0,p2:2.6} ];
+/* スマホ用の星: 小さな球にロゴを貼り、自転させる。落ち着いた色で控えめに発光 */
+const STAR_STYLE = {
+  'Bluesky':         { body:'#22336b', glow:'#4a68c8', ink:false },   // 紺
+  'Buy Me a Coffee': { body:'#f1e6a6', glow:'#f1e6a6', ink:false },   // 薄い黄色
+  'Email':           { body:'#f4f1ea', glow:'#ffffff', ink:true  },   // 白
+};
+const toLinear = (hex) => { const c = new THREE.Color(hex); return moonRenderer.outputEncoding === THREE.sRGBEncoding ? c.convertSRGBToLinear() : c; };
+const starHaloTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const x = cv.getContext('2d'), g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, 'rgba(255,255,255,0.55)'); g.addColorStop(0.45, 'rgba(255,255,255,0.16)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(cv);
+})();
 const stickerGroup = new THREE.Group(); moonPivot.add(stickerGroup);   // 月と一緒に回る
 const starGroup = new THREE.Group(); moonScene.add(starGroup);          // 月とは独立して動く
-const stickerMeshes = [], moonStarSprites = [];
+const stickerMeshes = [], moonStarSprites = [], moonStarGroups = [];   // moonStarSprites = タップ判定用の球
 MOON_LINKS.forEach((link, i) => {
   const yaw = THREE.MathUtils.degToRad(link.yaw), pitch = THREE.MathUtils.degToRad(link.pitch);
   const n = new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), Math.cos(yaw)*Math.cos(pitch));
@@ -1401,15 +1404,30 @@ MOON_LINKS.forEach((link, i) => {
   sticker.userData.link = link; link.sticker = sticker;
   stickerGroup.add(sticker); stickerMeshes.push(sticker);
 
-  const star = new THREE.Sprite(new THREE.SpriteMaterial({ map: buildLinkTexture(link, 'star'), transparent:true, depthWrite:false }));
-  star.userData.link = link; link.star = star; link.motion = STAR_MOTION[i % STAR_MOTION.length];
-  starGroup.add(star); moonStarSprites.push(star);
+  const st = STAR_STYLE[link.name];
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 32, 24),
+    new THREE.MeshStandardMaterial({ color: toLinear(st.body), emissive: toLinear(st.glow), emissiveIntensity: 0.35, roughness: 0.7, metalness: 0 })
+  );
+  const A = 0.62;   // ロゴを貼る球面パッチの広がり(ラジアン)。球面に沿って曲がる
+  const decal = new THREE.Mesh(
+    new THREE.SphereGeometry(1.006, 24, 24, Math.PI/2 - A, A*2, Math.PI/2 - A, A*2),
+    new THREE.MeshBasicMaterial({ map: st.ink ? buildLinkTexture(link, 'ink') : link.texNormal, transparent:true, depthWrite:false })
+  );
+  body.add(decal);
+  const tilt = new THREE.Group(); tilt.rotation.z = 0.35; tilt.add(body);   // 少し傾いた軸で自転
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: starHaloTex, color: toLinear(st.glow), transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false }));
+  halo.scale.setScalar(5.2); halo.raycast = () => {};
+  const star = new THREE.Group(); star.add(halo, tilt);
+  body.userData.link = link; link.star = star; link.spin = body; link.motion = STAR_MOTION[i % STAR_MOTION.length];
+  starGroup.add(star); moonStarSprites.push(body); moonStarGroups.push(star);
 });
 
 function animateMoonStars(t){
   MOON_LINKS.forEach((l) => {
     const m = l.motion;
     l.star.position.set(Math.sin(t*m.w1 + m.p1) * moonStarExtent.ax, Math.sin(t*m.w2 + m.p2) * moonStarExtent.ay, MOON_STAR_Z);
+    l.spin.rotation.y = t * 0.5 + m.p1;   // 自転
   });
 }
 
@@ -1470,8 +1488,8 @@ function fitMoonCamera(){
   const halfH = Math.tan(vHalf) * (dist - MOON_STAR_Z);   // 星の奥行きでの可視範囲
   moonStarExtent.ax = halfH * moonCamera.aspect * 0.8;
   moonStarExtent.ay = halfH * 0.75;
-  const spriteSize = 64 * (2 * halfH / h);                 // 画面上で約64px(中の円盤は約38px)
-  moonStarSprites.forEach((sp) => sp.scale.set(spriteSize, spriteSize, 1));
+  const starRadius = 20 * (2 * halfH / h);                 // 画面上で直径約40pxの球
+  moonStarGroups.forEach((g) => g.scale.setScalar(starRadius));
 }
 
 (function buildSitemap(){
