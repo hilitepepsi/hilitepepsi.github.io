@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { getSourceCaption } from './captions.js';
+import { getSourceCaption, renderRichText } from './captions.js';
 
 // ── セリフ表示(星の真上に直接投影して表示) ─────
 export function createDialogue(camera) {
   const dialogueEl = document.getElementById('dialogue');
-  const sourceCaption = getSourceCaption(); // captions.js側(convergence/hamiltonian/finale)と共有の右下出典ボックス
+  const sourceCaption = getSourceCaption(); // captions.js側(convergence/hamiltonian/trigger)と共有の右下出典ボックス
   let dialogueTimer = null;
   let activeStar = null;                                // 現在セリフを表示中の星
   const dialogueOffset = new THREE.Vector3(0, 0.6, 0);  // 星から少し浮かせるオフセット
@@ -17,7 +17,7 @@ export function createDialogue(camera) {
     if (activeStar && activeStar !== starMesh) {
       activeStar.visible = true;
     }
-    dialogueEl.textContent = text;
+    renderRichText(dialogueEl, text); // *...* で囲んだ部分だけイタリックにできる
     dialogueEl.classList.add('show');
     if (work) sourceCaption.setText(work); else sourceCaption.hide();
     activeStar = starMesh || null;
