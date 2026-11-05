@@ -19,9 +19,11 @@ window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); }
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400;1,500;1,600&family=Playfair+Display:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;1,400;1,500;1,600&family=Playfair+Display:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
 <style>
 :root{
+  --font-title:'Times New Roman', Times, serif;           /* titles: Times New Roman */
+  --font-sub:'EB Garamond', 'Times New Roman', serif;  /* subs (years etc.) and the scroll hint: Cormorant Garamond */
   color-scheme: light;
   --paper:#f4f1ea;
   --ink:#14120f;
@@ -33,6 +35,7 @@ window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); }
                   body.expanded below) */
   --my: 2.4vh;
   --axis-label-gap: 1.8vh;
+  --list-pad: 1.5vh;   /* margin between the axis ends and the first / last row of the two lists (Bananafish on top, Teddy / Hapworth at the bottom). Keep in sync with LIST_PAD in measureAxisLength */
   --burst-size: clamp(56px, 20vw, 100px);  /* the starburst before the click */
   /* the starburst's bottom edge is this far above the axis row. After the click it shrinks to .35 about its centre,
      and it then sits right under The Catcher (--burst-catcher-gap below the title), clearly nearer to it than to
@@ -49,7 +52,7 @@ window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); }
 body.expanded{ --mx:0px; --my:0px; }
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{background:var(--paper);color:var(--ink);}
-body{ font-family:'Cormorant Garamond', serif; }
+body{ font-family:'EB Garamond', serif; }
 body.locked{ overflow:hidden; height:100dvh; }
 
 /* --- finale: reverse scroll swaps paper and ink. The two colours are registered so that a change
@@ -115,13 +118,14 @@ body.locked{ overflow:hidden; height:100dvh; }
 }
 
 .title-entry{ position:absolute; left:50%; translate:-50% 0; top:46%; text-align:left; display:flex; align-items:baseline; }
-.title-entry .work{
-  font-family:'Playfair Display', serif;
+.title-entry .work, .book-entry .work{
+  font-family:var(--font-title);
   font-style:italic;
   font-size:clamp(19px,5vw,28px);
   white-space:nowrap;
 }
-.title-entry .year{
+.title-entry .year, .book-entry .year{
+  font-family:var(--font-sub); font-style:normal;
   width:0; white-space:nowrap; transform:translateX(.6rem); /* hangs off the right so only the title is centred */
   font-size:clamp(12px,3vw,15px);
   letter-spacing:.24em;
@@ -137,22 +141,23 @@ body.locked{ overflow:hidden; height:100dvh; }
 .story-entry .story-year,
 .sub-entry .year{ transition:opacity .2s ease; }
 
-/* the 9 stories inside Nine Stories. The list starts 3vh below O and JS gives it the height
-   that ends exactly where the axis ends, so the 9 titles are spread over the axis length. */
+/* the 9 stories inside Nine Stories. The list starts --list-pad below O and JS gives it the height
+   that ends --list-pad short of where the axis ends (same margin at both ends), so the 9 titles are spread over the axis length. */
 .story-works{
-  position:absolute; left:var(--left); top:calc(46% + 3vh);
+  position:absolute; left:var(--left); top:calc(46% + var(--list-pad));
   display:flex; flex-direction:column; justify-content:space-between; align-items:flex-start; gap:.6vh;
   padding-left:var(--axis-label-gap); /* the axis line runs along the list; keep the text off it */
 }
 .story-entry{
   opacity:0;
   will-change:opacity, transform; /* own GPU layer: don't rely on the parent 3D context to repaint on opacity-only changes (mobile) */
-  font-family:'Cormorant Garamond', serif;
+  font-family:var(--font-title);
   font-style:italic;
   font-size:clamp(11px,3vw,14px);
   white-space:nowrap;
 }
 .story-entry .story-year{
+  font-family:var(--font-sub); font-style:normal;
   margin-left:.6em;
   font-size:.85em;
   color:var(--ink-soft);
@@ -173,24 +178,62 @@ body.locked{ overflow:hidden; height:100dvh; }
    starts extending, each row is wiped out (fades, drifting a little to the left) as the tip of the
    line reaches it. Only when the line is done does the single "The Glass Saga" label come in */
 .sub-works{
-  position:absolute; left:var(--left); top:calc(46% + 3vh);
+  position:absolute; left:var(--left); top:calc(46% + var(--list-pad));
   display:flex; flex-direction:column; justify-content:space-between; align-items:flex-start; gap:1vh;
   padding-left:var(--axis-label-gap);
 }
 .sub-entry{
   opacity:0;
   will-change:opacity, transform; /* outside the 3D tree, but the WebGL canvas next to it causes the same missed repaint */
-  font-family:'Cormorant Garamond', serif;
+  font-family:var(--font-title);
   font-style:italic;
   font-size:clamp(12px,3.3vw,16px);
   white-space:nowrap;
 }
 .sub-entry .year{
+  font-family:var(--font-sub); font-style:normal;
   margin-left:.6em;
   font-size:.85em;
   color:var(--ink-soft);
   letter-spacing:.05em;
 }
+
+.sub-works.clickable{ pointer-events:auto; cursor:pointer; }   /* while the whole list is up (see onScroll): click = show the published books */
+/* Characters (.ch) are made by the script (splitChars). Nothing here ever moves: text only fades in place, from its RIGHT end.
+   opacity = --so (set by onScroll: the scroll-driven wipe / reveal) x --bo (set below: the list <-> books switch). */
+.ch{ opacity:calc(var(--so, 1) * var(--bo, 1)); }
+.glass-title .ch{ --so:0; }   /* "The Glass Saga" is revealed by onScroll */
+/* Until the module script has split the text into characters (.ch, all transparent) and placed everything
+   (measureAxisLength), the raw text would show: the books at the top edge (their top is still 0), the vertical
+   "The Glass Saga" on the right (--left still unset). So both stay hidden until the script adds .split-ready. */
+html:not(.split-ready) .book-works,
+html:not(.split-ready) .glass-title{ visibility:hidden; }
+
+.sub-works.clickable{ pointer-events:auto; cursor:pointer; }   /* while the whole list is up (see onScroll): click = show the published books */
+/* list -> books: Franny, Raise High, Zooey, Seymour are erased all at once, each from its right end (Hapworth stays as it is) */
+/* "A Perfect Day for Bananafish" belongs to Nine Stories, so it goes too when the books come up: erased in place from the
+   bottom edge up (nothing moves). The clip is only there for that; the margins keep italics and shadows from being cut. */
+#story1{ clip-path:inset(-6px -10px -6px -10px); }
+.books-mode #story1{ clip-path:inset(-6px -10px 100% -10px); }
+body.books-anim #story1{ transition:clip-path .6s ease; }
+body.books-anim .sub-entry.in-book .ch{ transition:opacity .3s ease; transition-delay:calc(var(--f) * .35s); }
+.books-mode .sub-entry.in-book .ch{ --bo:0; }
+.books-mode .sub-entry.in-book{ pointer-events:none; }
+
+/* The published books of the Glass saga (Franny + Zooey, Raise High + Seymour): shown in place of the
+   list when it is clicked, set like "The Catcher in the Rye" (.title-entry): centred italic title, the year
+   hanging off its right end. They appear from the right end, quickly. Click one to go back to the list. */
+.book-works{
+  position:absolute; left:50%; top:0; width:0; height:0;   /* just an anchor on the page's vertical centre line: each book is placed by measureAxisLength() */
+  pointer-events:none;
+}
+.books-mode .book-works.live{ pointer-events:auto; cursor:pointer; }   /* .live: only while the list is the scene (see onScroll) */
+.book-entry{ position:absolute; left:0; top:0; transform:translate(-50%, -50%); display:flex; justify-content:center; align-items:last baseline; text-align:center; }   /* top: set in measureAxisLength */
+.book-entry .work{ white-space:nowrap; }   /* no automatic wrapping: "Raise High…" breaks exactly once, before "and" (<br> in the markup), at every screen size */
+.book-entry .ch{ opacity:0; }
+.books-mode .book-entry .ch{ opacity:var(--so, 1); }   /* --so: set by onScroll, so the books are erased from the right when the Z axis passes them */
+body.books-anim .book-entry .ch{ transition:opacity .3s ease; transition-delay:calc(var(--f) * .3s); }
+body.books-anim.books-mode .book-entry .ch{ transition-delay:calc(.35s + var(--f) * .3s); }   /* right after the list has started to go */
 
 .axis-v{
   position:absolute; left:var(--left); top:46%;
@@ -210,19 +253,18 @@ body.locked{ overflow:hidden; height:100dvh; }
   position:absolute; left:calc(var(--left) + var(--axis-label-gap)); top:46%;
   transform-origin:top left;
   transform:rotate(90deg) translate(-50%, -100%);
-  font-family:'Playfair Display', serif;
+  font-family:var(--font-title);
   font-style:italic;
   font-size:clamp(19px,5vw,28px);
   white-space:nowrap;
   display:flex; align-items:baseline;
-  opacity:0;
-  will-change:opacity, transform;
+  will-change:transform;
 }
 /* same look as the other titles' years; hangs off the end of the text (the bottom, once rotated) so only the title is centred.
    It goes with the other two years: .labels3d .year{opacity:0} hides it when the title is attached */
 .glass-title .year{
   width:0; white-space:nowrap; transform:translateX(.6rem);
-  font-family:'Cormorant Garamond', serif; font-style:normal;
+  font-family:var(--font-sub); font-style:normal;
   font-size:clamp(12px,3vw,15px);
   letter-spacing:.12em;
   color:var(--ink-soft);
@@ -350,7 +392,7 @@ body.locked{ overflow:hidden; height:100dvh; }
 .axis-letter > span{
   position:absolute; left:0; top:0;
   transform-origin:0 0;
-  font-family:'Playfair Display', serif;
+  font-family:'EB Garamond', serif;
   font-style:italic;
   line-height:1;
   white-space:nowrap;
@@ -368,7 +410,7 @@ body.locked{ overflow:hidden; height:100dvh; }
   pointer-events:none;
 }
 .finale p{
-  font-family:'Cormorant Garamond', serif;
+  font-family:'EB Garamond', serif;
   font-style:italic;
   font-size:clamp(17px,4.6vw,26px);
   line-height:1.9;
@@ -399,7 +441,7 @@ body.locked{ overflow:hidden; height:100dvh; }
 .question.gone{ opacity:0 !important; transition:opacity 1s ease; }   /* the camera note comes in, in the same spot */
 .question{
   position:absolute; left:0; right:0; bottom:0;
-  font-family:'Cormorant Garamond', serif;
+  font-family:'EB Garamond', serif;
   font-style:italic;
   font-size:clamp(16px,4.2vw,22px);
   line-height:1.8;
@@ -410,7 +452,7 @@ body.locked{ overflow:hidden; height:100dvh; }
   position:absolute; left:50%; bottom:3vh;   /* same spot as the questions and the scroll hint */
   transform:translateX(-50%);
   width:min(80vw,460px); text-align:center;
-  font-family:'Cormorant Garamond', serif;
+  font-family:'EB Garamond', serif;
   font-style:italic;
   font-size:clamp(16px,4.2vw,22px);   /* same as .question */
   line-height:1.8;
@@ -421,7 +463,7 @@ body.locked{ overflow:hidden; height:100dvh; }
 .hint{
   position:absolute; left:50%; bottom:3vh;
   transform:translateX(-50%);
-  font-family:'Cormorant Garamond', serif;
+  font-family:var(--font-sub);
   font-style:italic;
   font-size:clamp(16px,4.2vw,22px);
   line-height:1.8;
@@ -462,14 +504,14 @@ body.locked{ overflow:hidden; height:100dvh; }
 
         <div class="story-works axis-handle" id="storyWorks">
           <div class="story-entry" id="story1">A Perfect Day for Bananafish<span class="story-year">1948</span></div>
-          <div class="story-entry" id="story2">Uncle Wiggily in Connecticut</div>
-          <div class="story-entry" id="story3">Just Before the War with the Eskimos</div>
-          <div class="story-entry" id="story4">The Laughing Man</div>
-          <div class="story-entry" id="story5">Down at the Dinghy</div>
-          <div class="story-entry" id="story6">For Esmé — with Love and Squalor</div>
-          <div class="story-entry" id="story7">Pretty Mouth and Green My Eyes</div>
-          <div class="story-entry" id="story8">De Daumier-Smith's Blue Period</div>
-          <div class="story-entry" id="story9">Teddy</div>
+          <div class="story-entry" id="story2">Uncle Wiggily in Connecticut<span class="story-year">1948</span></div>
+          <div class="story-entry" id="story3">Just Before the War with the Eskimos<span class="story-year">1948</span></div>
+          <div class="story-entry" id="story4">The Laughing Man<span class="story-year">1949</span></div>
+          <div class="story-entry" id="story5">Down at the Dinghy<span class="story-year">1949</span></div>
+          <div class="story-entry" id="story6">For Esmé — with Love and Squalor<span class="story-year">1950</span></div>
+          <div class="story-entry" id="story7">Pretty Mouth and Green My Eyes<span class="story-year">1951</span></div>
+          <div class="story-entry" id="story8">De Daumier-Smith's Blue Period<span class="story-year">1952</span></div>
+          <div class="story-entry" id="story9">Teddy<span class="story-year">1953</span></div>
         </div>
         <div class="story-axis-v axis-handle" id="storyAxisV"></div>
       </div>
@@ -491,11 +533,16 @@ body.locked{ overflow:hidden; height:100dvh; }
 
   <div class="sub-works" id="subWorks">
     <div class="sub-entry" aria-hidden="true" style="visibility:hidden">&nbsp;</div>
-    <div class="sub-entry" id="sub1"><span class="work">Franny</span><span class="year">1955</span></div>
-    <div class="sub-entry" id="sub2"><span class="work">Raise High the Roof Beam, Carpenters</span><span class="year">1955</span></div>
-    <div class="sub-entry" id="sub3"><span class="work">Zooey</span><span class="year">1957</span></div>
-    <div class="sub-entry" id="sub4"><span class="work">Seymour: an Introduction</span><span class="year">1959</span></div>
+    <div class="sub-entry in-book" id="sub1"><span class="work">Franny</span><span class="year">1955</span></div>
+    <div class="sub-entry in-book" id="sub2"><span class="work">Raise High the Roof Beam, Carpenters</span><span class="year">1955</span></div>
+    <div class="sub-entry in-book" id="sub3"><span class="work">Zooey</span><span class="year">1957</span></div>
+    <div class="sub-entry in-book" id="sub4"><span class="work">Seymour: an Introduction</span><span class="year">1959</span></div>
     <div class="sub-entry" id="sub5"><span class="work">Hapworth 16, 1924</span><span class="year">1965</span></div>
+  </div>
+
+  <div class="book-works" id="bookWorks">
+    <div class="book-entry"><span class="work">Franny and Zooey</span><span class="year">1961</span></div>
+    <div class="book-entry"><span class="work">Raise High the Roof Beam, Carpenters<br>and Seymour: An Introduction</span><span class="year">1963</span></div>
   </div>
 
   <div class="question-slot">
@@ -626,7 +673,67 @@ const subs = [
   document.getElementById('sub5'),
 ];
 const subWorks = document.getElementById('subWorks');
+const bookWorks = document.getElementById('bookWorks');
+// ── text -> characters, for right-to-left fades that never move anything ─────────────────────────────
+// Every character becomes <span class="ch" style="--f:…">, --f = how far from the right end of the element it is
+// (0 = the last character). The text nodes are wrapped (.chw) so a flex parent keeps seeing one item. Done once at load,
+// so the layout is the same before and after.
+function splitChars(el){
+  const chars = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach((tn) => {
+    if (!tn.textContent) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'chw';
+    for (const c of tn.textContent) {
+      const sp = document.createElement('span');
+      sp.className = 'ch';
+      sp.textContent = c;
+      wrap.appendChild(sp);
+      chars.push(sp);
+    }
+    tn.replaceWith(wrap);
+  });
+  chars.forEach((sp, i) => { sp._f = (chars.length - 1 - i) / chars.length; sp._l = i / chars.length; sp.style.setProperty('--f', sp._f.toFixed(3)); });
+  return chars;
+}
+const CH_SOFT = 0.25;   // softness of the edge that runs through the text
+function setCharOpacity(sp, o){
+  const v = o.toFixed(2);
+  if (sp._v !== v) { sp._v = v; sp.style.setProperty('--so', v); }
+}
+// p: 0 -> 1. The text is erased from its right end (erase) / written from its left end (reveal), each character in place.
+function eraseFromRight(chars, p){ const k = p * (1 + CH_SOFT); for (const sp of chars) setCharOpacity(sp, 1 - clamp((k - sp._f) / CH_SOFT, 0, 1)); }
+function revealFromLeft(chars, p){ const k = p * (1 + CH_SOFT); for (const sp of chars) setCharOpacity(sp, clamp((k - sp._l) / CH_SOFT, 0, 1)); }
+
+const story1Chars = splitChars(stories[0]);
+const subChars = subs.map(splitChars);
+const bookEntryEls = Array.from(document.querySelectorAll('.book-entry'));
+const bookChars = bookEntryEls.map(splitChars);
+// A book title may sit on two lines ("Raise High…" / "and Seymour…"): --f/_f are re-set from the characters' real x positions,
+// so both lines are erased / written together, from the right (not the lower line first, then the upper one).
+function setCharsFByX(chars){
+  const xs = chars.map((sp) => { const r = sp.getBoundingClientRect(); return (r.left + r.right) / 2; });
+  const lo = Math.min(...xs), span = (Math.max(...xs) - lo) || 1;
+  chars.forEach((sp, i) => { sp._f = Math.min(0.999, 1 - (xs[i] - lo) / span); sp.style.setProperty('--f', sp._f.toFixed(3)); });
+}
+// click the Glass Saga list -> the published books; click a book -> back to the list (only while the list is up, see onScroll)
+let glassListLive = false;   // set in onScroll: the whole list is up and not yet being wiped
+let booksAnimTimer = null;
+function setBooksMode(on){
+  const b = document.body;
+  if (b.classList.contains('books-mode') === on) return;
+  b.classList.add('books-anim');
+  b.classList.toggle('books-mode', on);
+  clearTimeout(booksAnimTimer);
+  booksAnimTimer = setTimeout(() => b.classList.remove('books-anim'), 1800);
+}
+subWorks.addEventListener('click', () => { if (glassListLive) setBooksMode(true); });
+bookWorks.addEventListener('click', () => setBooksMode(false));
 const glassTitle = document.getElementById('glassTitle');
+const glassChars = splitChars(glassTitle);
 const storyWorks = document.getElementById('storyWorks');
 const axisV = document.getElementById('axisV');
 const yAxisGroup = document.getElementById('yAxisGroup');
@@ -846,14 +953,21 @@ function measureAxisLength(){
   // axis length: 1.5x the height the 9 titles would need packed together, shared by all three axes (X included)
   const natural = stories.reduce((t, el) => t + el.offsetHeight, 0) + (stories.length - 1) * window.innerHeight * 0.006;
   const h = natural * 1.5;
-  // both lists start 3vh below O and end where the axis ends
-  const listH = h - window.innerHeight * 0.03;
+  // both lists start LIST_PAD below O and end LIST_PAD short of the axis end (the same margin top and bottom)
+  const LIST_PAD = window.innerHeight * 0.015;   // = --list-pad
+  const listH = h - 2 * LIST_PAD;
   storyWorks.style.height = listH + 'px';
   subWorks.style.height = listH + 'px';
   storyStep = stories[1].offsetTop - stories[0].offsetTop;
   // where the growing Z axis reaches the row of each of the Glass Saga's 6 works (fraction of the axis
   // length). The Glass list's first row is the invisible spacer standing in for Bananafish.
-  glassRows = Array.from(subWorks.children).map(el => (window.innerHeight * 0.03 + el.offsetTop + el.offsetHeight / 2) / h);
+  glassRows = Array.from(subWorks.children).map(el => (LIST_PAD + el.offsetTop + el.offsetHeight / 2) / h);
+  // the two books share, evenly, the space of the five rows that give way to them: Bananafish (the invisible spacer, first child)
+  // down to Seymour. Each is centred in its half of that space (1/4 and 3/4 of it).
+  const spaceTop = subWorks.offsetTop + subWorks.children[0].offsetTop;
+  const spaceBottom = subWorks.offsetTop + subs[3].offsetTop + subs[3].offsetHeight;
+  bookEntryEls.forEach((el, i) => { el.style.top = (spaceTop + (spaceBottom - spaceTop) * (2 * i + 1) / 4) + 'px'; });
+  bookChars.forEach(setCharsFByX);
   storyAxisV.style.height = h + 'px';
   axisV.style.height = h + 'px';
   xEndpoint.style.transform = `translateZ(${-h}px)`;  // tip of X (depth)
@@ -887,6 +1001,7 @@ function measureAxisLength(){
   }
 }
 measureAxisLength();
+root.classList.add('split-ready');   // characters are split and placed: the books / Glass Saga title may now exist (still transparent until scrolled to)
 window.addEventListener('load', measureAxisLength);
 window.addEventListener('resize', measureAxisLength);
 if (document.fonts) document.fonts.ready.then(measureAxisLength); // label sizes depend on the web fonts
@@ -1380,22 +1495,21 @@ function triangle(x, inStart, inEnd, holdEnd, outEnd){
    - the axis events (a line growing, the axis turning) are long, so they play slowly under the finger.
    Everything below is laid end to end from these few numbers. */
 const GAP = 0.5;
-const AXIS_GROW = 0.5;     // the vertical axis of Nine Stories grows
-const AXIS_LAG = 0.5;      // ... stays as it is for a while before it starts to turn
+const AXIS_LAG = 0.5;      // the vertical axis of Nine Stories (it grows together with the nine titles) stays as it is for a while before it starts to turn
 const AXIS_TURN = 1.5;     // ... and turns to horizontal (the nine titles fold up meanwhile)
 const Z_GROW = 0.7;        // the Z axis grows; the Glass Saga's 6 works fade out along it, row by row
 const GLASS_TITLE_LEN = 0.3; // and only then does "The Glass Saga" appear
-const GLASS_OUT = 12;      // vw: how far to the left each of the 6 works drifts while it fades
 const GLASS_WIPE = 0.07;   // fraction of the axis length over which a row fades while the line passes it
 
 const QOUT = 0.15;                                                    // scroll length over which a question goes out, ending where the next one starts to come in
 const Q1 = [0, 0.30, 0.55, 0.85];                                     // "Why is his time stopped?": in, hold, out (now: in only, it stays; see onScroll)
 const NINE = [Q1[3] + GAP, Q1[3] + GAP + 0.30];                       // Nine Stories slides in
-const Q2 = [0, 0.25, 0.50, 0.80].map(v => NINE[1] + GAP + v);         // "Why did he shoot himself?"
-const STORY_START = Q2[3] + GAP, STORY_STEP = 0.09;
+const GAP_SHORT = 0.1;   // the short pause used between Nine Stories, "Why did he shoot himself?" and the first title (the long GAP there only added stars)
+const Q2 = [0, 0.25].map(v => NINE[1] + GAP_SHORT + v);               // "Why did he shoot himself?": comes in right after Nine Stories, and stays
+const STORY_START = Q2[1] + GAP_SHORT, STORY_STEP = 0.09;   // Bananafish follows the question almost at once
 const STORY_RANGES = stories.map((_, i) => [STORY_START + i * STORY_STEP, STORY_START + i * STORY_STEP + STORY_STEP]);
 const STORY_END = STORY_START + stories.length * STORY_STEP;
-const STORY_VLINE = [STORY_END + GAP, STORY_END + GAP + AXIS_GROW];
+const STORY_VLINE = [STORY_START, STORY_END];   // the vertical axis grows together with the nine titles appearing (one stretch of scroll, not two)
 const ROTATE = [STORY_VLINE[1] + AXIS_LAG, STORY_VLINE[1] + AXIS_LAG + AXIS_TURN];
 // the 9 stories fold up from the bottom: each title slides up into the one above and is gone
 // (Teddy into De Daumier, De Daumier into Pretty Mouth, …). Starts together with the rotation of
@@ -1457,9 +1571,9 @@ function onScroll(){
     const [a, b] = STORY_RANGES[i];
     const t = rangeT(su, a, b);
     if (i === 0) {                                  // A Perfect Day stays until the Z axis takes over (then it leaves with the other five)
-      const w = glassWipe(vT, 0);
-      el.style.opacity = t * (1 - w);
-      el.style.transform = `translate(${-w * GLASS_OUT}vw, ${(1 - t) * 10}px)`;
+      eraseFromRight(story1Chars, glassWipe(vT, 0));   // erased in place, from its right end
+      el.style.opacity = t;
+      el.style.transform = `translateY(${(1 - t) * 10}px)`;
       return;
     }
     const k = stories.length - 1 - i;               // 0 for Teddy, the first to go
@@ -1478,14 +1592,25 @@ function onScroll(){
   subs.forEach((el, i) => {
     const [a, b] = SUB_RANGES[i];
     const t = rangeT(su, a, b);
-    const w = glassWipe(vT, i + 1);
-    el.style.opacity = t * (1 - w);
-    el.style.transform = `translate(${-w * GLASS_OUT}vw, ${(1 - t) * 10}px)`;
+    eraseFromRight(subChars[i], glassWipe(vT, i + 1));   // erased in place, from its right end, as the line reaches it
+    el.style.opacity = t;
+    el.style.transform = `translateY(${(1 - t) * 10}px)`;
   });
+  // books version: the two books are erased in place, from the right, as the Z axis reaches the four rows they stand for
+  // (Franny and Zooey = rows 1 and 3, Raise High and Seymour = rows 2 and 4)
+  eraseFromRight(bookChars[0], rangeT(vT, glassRows[1] - GLASS_WIPE, glassRows[3] + GLASS_WIPE));
+  eraseFromRight(bookChars[1], rangeT(vT, glassRows[2] - GLASS_WIPE, glassRows[4] + GLASS_WIPE));
+
+  // the list can be clicked (-> the books) from the moment all its rows are up until the Z axis starts to wipe them;
+  // outside that stretch the books are put away again, so scrolling on/back always meets the normal scene
+  const listLive = su >= FRANNY_END && su < FRANNY_AXIS_V[0];
+  glassListLive = listLive;
+  subWorks.classList.toggle('clickable', listLive);
+  if (su < FRANNY_END) setBooksMode(false);   // (past the list the books stay: they are erased below as the Z axis comes)
+  bookWorks.classList.toggle('live', listLive);
 
   const glassT = rangeT(su, GLASS_TITLE[0], GLASS_TITLE[1]);
-  glassTitle.style.opacity = glassT;
-  glassTitle.style.transform = `rotate(90deg) translate(calc(-50% + ${(1 - glassT) * -10}px), -100%)`;
+  revealFromLeft(glassChars, glassT);   // "The Glass Saga" is written in place, from its left end
 
   pageEls.forEach((el, i) => {
     const t = rangeT(su, PAGE_AT[i], PAGE_AT[i] + 0.25);
