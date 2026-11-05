@@ -11,7 +11,7 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 // 直すだけ(反射・ハイライト・色味は一切加えない。屈折のみ)。
 //
 // これにより:
-//   ・phase3.js(数式の配置・アニメ)は一切関知しない/変更不要。
+//   ・phase2.js(数式の配置・アニメ)は一切関知しない/変更不要。
 //   ・Bloom(selective bloom)の仕組みにも触れない。単にBloom後の絵をさらに歪めるだけ。
 //
 // 雨粒(波紋の発生源)は常時ごく弱く降り続け、スクロール操作の蓄積量(disturbance,
@@ -201,7 +201,7 @@ export class RippleRefractionPass extends Pass {
     this.disturbance = THREE.MathUtils.clamp(disturbance, 0, 1);
   }
 
-  // 高さ場を完全にゼロへ戻す。このパスはphase3の間だけenabled=trueにする運用なので、
+  // 高さ場を完全にゼロへ戻す。このパスはphase2の間だけenabled=trueにする運用なので、
   // 再度有効化するたびに呼び、「無効化していた間に凍結していた古い波」が
   // 急に見えてしまうのを防ぐ。
   reset(renderer) {
@@ -359,7 +359,7 @@ export function attachScrollDrivenRain({
   const SPEED_ALPHA = 0.25;
 
   function onWheel(e) {
-    // ★ wavePass(=phase3の間だけenabled=true)が無効な間は、雨量制御はもちろん、
+    // ★ wavePass(=phase2の間だけenabled=true)が無効な間は、雨量制御はもちろん、
     //   gsap.globalTimeline.timeScale()もいじらない(home画面等、他ページの
     //   アニメーション速度まで巻き込んでしまうのを防ぐ)。
     if (!field.enabled) return;
@@ -390,7 +390,7 @@ export function attachScrollDrivenRain({
     const dt = Math.min(0.25, (now - lastTickTime) / 1000);
     lastTickTime = now;
 
-    if (!field.enabled) return; // phase3以外では何もしない(timeScaleにも触れない)
+    if (!field.enabled) return; // phase2以外では何もしない(timeScaleにも触れない)
 
     scrollEnergy *= Math.exp(-decayPerSecond * dt);
     field.setDisturbance(scrollEnergy);
@@ -423,12 +423,12 @@ export function attachScrollDrivenRain({
 
   return {
     tickIdleDecay,
-    // ★追加: phase3終了時にmain.js側から呼ぶ。スクロールに連動させていた
+    // ★追加: phase2終了時にmain.js側から呼ぶ。スクロールに連動させていた
     //   gsap.globalTimeline.timeScale()を明示的に1へ戻し、内部の蓄積値
     //   (emaSpeed/scrollEnergy)もリセットする。
-    //   これを呼ばないと、phase3終了時点でたまたま無操作が続いていた場合、
+    //   これを呼ばないと、phase2終了時点でたまたま無操作が続いていた場合、
     //   timeScaleがidleTimeScale(0.05=5%速度)近くまで落ちたまま放置され、
-    //   phase3以降(宇宙ページ等)のアニメーション全体が異常に遅くなってしまう。
+    //   phase2以降(宇宙ページ等)のアニメーション全体が異常に遅くなってしまう。
     reset() {
       emaSpeed = 0;
       scrollEnergy = 0;
