@@ -69,7 +69,7 @@ export function createUniverseProjectionMixer(camera) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// ── 「宇宙ページ」: Phase3以降、画面クリックで遷移する別シーン ──────────
+// ── 「宇宙ページ」: Phase2以降、画面クリックで遷移する別シーン ──────────
 // ══════════════════════════════════════════════════════════════
 //
 // 仕様(ご指示より):
@@ -98,7 +98,7 @@ export function createUniverseProjectionMixer(camera) {
 //     revealTripodRing, liftTripod, startTripodRoofPulse,
 //   } from './universe.js';
 //   const universe = createUniverse(scene);              // 起動時に1回
-//   // Phase3完了後、画面クリックを検知したら:
+//   // Phase2完了後、画面クリックを検知したら:
 //   if (!universe.isActive) {
 //     enterUniverse(universe, { camera, controls, onComplete: () => {} });
 //   } else {
@@ -132,7 +132,49 @@ export function createUniverseProjectionMixer(camera) {
 //   解像度に留める目的で引き続き残してある。
 const CANVAS_MAX_WIDTH = 2400;
 
-export function loadInkTexture(url) {
+// ── 数式テクスチャに「多段ブラーのグロー」を焼き込む(UnrealBloomには頼らない) ──────
+// ★ 2026-10-30 追加: UnrealBloomはスクリーン空間・全体共通の閾値/半径で効くため、数式のような
+//   細い線だけに「狭い芯+広い裾」の多段グローをかけたり、距離で見え方がぶれるのを防げない。
+//   そこで数式画像そのものに、半径の違うガウスブラーを加算で重ねた光を描き込んでしまう。
+//   (数式スプライトは従来どおりBloomから除外したままにする=二重がけしない)
+// 半径は「インク画像の高さ」に対する比で指定するので、画像サイズが変わっても見た目は同じ。
+export const EQUATION_GLOW = {
+  enabled: true,
+  pad: 0.9,        // グローが切れないよう周囲に足す余白(インク高さ比)
+  intensity: 1.0,  // 全体の強さ(0.5=控えめ / 1.5=強め)
+  // [ブラー半径(インク高さ比), 強さ(0-1)]: 内側ほど鋭く強く、外側ほど広く弱く
+  layers: [[0.06, 1.0], [0.14, 0.85], [0.30, 0.55], [0.60, 0.32], [1.00, 0.18]],
+};
+
+function bakeGlowCanvas(ink, glow) {
+  const w = ink.width, h = ink.height;
+  const pad = Math.max(0, Math.min(Math.round(h * glow.pad), Math.floor((4096 - w) / 2)));
+  const cw = w + pad * 2, ch = h + pad * 2;
+  const out = document.createElement('canvas');
+  out.width = cw;
+  out.height = ch;
+  const ctx = out.getContext('2d');
+  const OFF = cw * 2; // 画像本体は画面外に描き、影だけを内側に落とす(ctx.filter非対応でも動く)
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.shadowColor = 'rgba(255,255,255,1)';
+  ctx.shadowOffsetX = OFF;
+  const count = Math.max(1, Math.ceil(glow.intensity));
+  for (const [radius, strength] of glow.layers) {
+    ctx.shadowBlur = h * radius;
+    ctx.globalAlpha = Math.min(1, (strength * glow.intensity) / count);
+    for (let i = 0; i < count; i++) ctx.drawImage(ink, pad - OFF, pad);
+  }
+  // 芯(元の数式)を最後にくっきり重ねる
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(ink, pad, pad);
+  return { canvas: out, worldScale: cw / w };
+}
+
+export function loadInkTexture(url, options = {}) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -162,10 +204,17 @@ export function loadInkTexture(url) {
         data[i + 3] = 255 - luminance; // 黒(0)→不透明(255)、白(255)→透明(0)
       }
       ctx.putImageData(imageData, 0, 0);
-      const texture = new THREE.CanvasTexture(canvas);
+      let outCanvas = canvas;
+      let worldScale = 1; // 余白を足した分、スプライトを広げて数式本体のワールドサイズを保つ倍率
+      if (options.glow && options.glow.enabled) {
+        const baked = bakeGlowCanvas(canvas, options.glow);
+        outCanvas = baked.canvas;
+        worldScale = baked.worldScale;
+      }
+      const texture = new THREE.CanvasTexture(outCanvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.needsUpdate = true;
-      resolve({ texture, aspect: w / h });
+      resolve({ texture, aspect: outCanvas.width / outCanvas.height, worldScale });
     };
     img.onerror = (err) => {
       console.error('loadInkTexture: 画像読み込み失敗', err);
@@ -667,7 +716,7 @@ export function updateEquationHoverByPointer(universe, camera, clientX, clientY)
 }
 
 // scene: このシーン専用のTHREE.Sceneでも、既存sceneの続きに追加でもよい
-// (main.js側で「Phase3までの要素は隠す/別レイヤーに逃がす」判断をしてから使う想定)。
+// (main.js側で「Phase2までの要素は隠す/別レイヤーに逃がす」判断をしてから使う想定)。
 export function createUniverse(scene) {
   // ★ tripod/ring対応スワップ演出(record.jsのmirrorGroupと位置を入れ替える)のための
   //   ラッパー。axesGroup自体はこれまで通りliftTripod・自転(rotateOnWorldAxis)で
@@ -760,11 +809,12 @@ export function createUniverse(scene) {
 
   // テクスチャは起動時に一度だけ非同期ロードしておく(クリックのたびに読み直さない)。
   const texturesReady = EQUATION_IMAGES.map((asset, i) =>
-    loadInkTexture(asset.url).then(({ texture, aspect }) => {
+    loadInkTexture(asset.url, { glow: EQUATION_GLOW }).then(({ texture, aspect, worldScale }) => {
       const sprite = sprites[i];
       sprite.material.map = texture;
       sprite.material.needsUpdate = true;
-      sprite.scale.set(EQUATION_WORLD_WIDTH, EQUATION_WORLD_WIDTH / aspect, 1);
+      // グロー用の余白ぶん(worldScale倍)広げて、数式本体の大きさは従来のまま
+      sprite.scale.set(EQUATION_WORLD_WIDTH * worldScale, (EQUATION_WORLD_WIDTH * worldScale) / aspect, 1);
       return { texture, aspect };
     }).catch((err) => {
       console.error(`createUniverse: 方程式画像(${asset.key})の読み込みに失敗`, err);
@@ -804,7 +854,7 @@ export function createUniverse(scene) {
     sprites,           // [standard, carousel] の順
     texturesReady,     // Promise配列。enterUniverse側でPromise.allしてから表示する
     equationIndex: 0,  // 現在表示中の画像インデックス
-    isActive: false,   // まだ「宇宙ページ」に入っていない(=Phase3までのシーンにいる)状態かどうか
+    isActive: false,   // まだ「宇宙ページ」に入っていない(=Phase2までのシーンにいる)状態かどうか
   };
 }
 
@@ -1037,7 +1087,7 @@ export function updateUniverse(universe, deltaSeconds, camera) {
   if (camera) camera.up.set(0, 1, 0);
 }
 
-// ── Phase3以降、最初の画面クリックで呼ぶ: 宇宙ページへ入る ──────────────
+// ── Phase2以降、最初の画面クリックで呼ぶ: 宇宙ページへ入る ──────────────
 // axes / axisLabels / equationAssembly側の要素(既存の三軸・数式・カルーセル)を
 // 隠す処理は、呼び出し側(main.js)がこの関数を呼ぶ前後で行ってください
 // (どのオブジェクトを隠すべきかはmain.js側の現在の状態管理に依存するため、
@@ -1153,7 +1203,7 @@ export function toggleUniverseEquation(universe) {
 //     大きい値にしておかないと、バウンスの下振れでリングを下回ってしまうので注意)。
 //   - main.js側の統合ポイント(5箇所):
 //       1) createUniverse(scene) を起動時に1回呼ぶ。
-//       2) Phase3完了後の画面クリックで、既存シーン要素を隠してから enterUniverse(...) を呼ぶ。
+//       2) Phase2完了後の画面クリックで、既存シーン要素を隠してから enterUniverse(...) を呼ぶ。
 //          (2回目以降のクリックは isActive を見て toggleUniverseEquation(universe) を呼ぶ)
 //       3) レンダーループ内で updateUniverse(universe, deltaSeconds) を毎フレーム呼ぶ(cameraは渡さなくてよい)。
 //       4) pointermoveハンドラ内で updateEquationHoverByPointer(universe, camera, e.clientX, e.clientY) を呼ぶ。
