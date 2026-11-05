@@ -21,6 +21,13 @@ import { getSourceCaption } from './captions.js'; // 作品名は他の出典と
 //     使っている現行three.jsのAPIであるcolorSpace / THREE.SRGBColorSpaceに置き換えた
 // ページを開いている間、右下に出しっぱなしにする作品名。
 const BANANAFISH_WORK = 'A Perfect Day for Bananafish';
+// ── 扉の外側の面 = 鏡(黒い世界への入口) ──
+//   扉側から見える面は、光沢のある黒い鏡面。その向こうには「既存の粒子の床」がそのまま続いている。
+//   床が平らなら、カメラ側の床の鏡像は扉の向こうの床と同じ位置になる。だから床を二重に作らず、
+//   「扉越しに見える部分だけ」を、砂の粒子ではなく『発光する黄色い粒子(glowMesh)』に差し替える。
+//   魚は「影」: 発光する床の上を、粒子が抜けた細い魚形の影が六匹泳ぐ。粒子は3D空間の実体なので視差も出る。
+//   初期カメラは扉のすぐ前まで寄り、画面は黒い空間(鏡面+光の粒+魚の影)だけになる。
+//   手前、元の "the young man" の位置に白い "Did you see more glass?"(初期画面の上端より上。引くと見える)。
 
 export function createBananafish(opts = {}) {
   const { onClose } = opts;
@@ -67,9 +74,11 @@ export function createBananafish(opts = {}) {
   const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 
   // ---------- manual camera orbit ----------
-  const camTarget = new THREE.Vector3(0, 0.7, ROOM_CENTER_Z);
-  const INITIAL_RADIUS = 9.6, INITIAL_AZIMUTH = Math.PI, INITIAL_POLAR = 1.34; // a bit further back than before, so the default door-side view isn't right up against the wall
-  let radius = INITIAL_RADIUS, azimuth = INITIAL_AZIMUTH, polar = INITIAL_POLAR;
+  const camTarget = new THREE.Vector3(0, 1.2, ROOM_CENTER_Z);
+  // 初期の距離は、扉の寸法が決まった後に fitDoorRadius() で求める(下の「初期カメラ」を参照)
+  const INITIAL_AZIMUTH = Math.PI, INITIAL_POLAR = 1.50; // 扉の外側・目線の高さ(y≒1.7)。やや水平に近く見て、上の白い文字が画面に入る
+  let initialRadius = 8.81;
+  let radius = initialRadius, azimuth = INITIAL_AZIMUTH, polar = INITIAL_POLAR;
   const POLAR_MIN = 0.85, POLAR_MAX = 1.85;
   const ROOM_SAFE_MARGIN = 0.5; // keep the viewer standing just outside whichever wall they're nearest to
   function keepCameraOutsideRoom(){
@@ -142,7 +151,7 @@ export function createBananafish(opts = {}) {
     u_spd_modifier_2: { value: 0.8 },
     u_colorA: { value: new THREE.Color(0x2b6cb0) },   // blue - wave
     u_colorB: { value: new THREE.Color(0x30e0c8) },   // turquoise - wave
-    u_colorSkin: { value: new THREE.Color(0xedb894) }, // sand
+    u_colorSkin: { value: new THREE.Color(0xf5d442) }, // sand particles (yellow; was orange-ish 0xedb894)
     // per-point "seen through the window" test, replacing the old whole-floor camera-side toggle:
     // only the patch of floor whose sightline to the camera actually threads through the window
     // opening turns into wave; everywhere else (including the rest of the floor when standing at
@@ -155,6 +164,12 @@ export function createBananafish(opts = {}) {
     u_fireActive: { value: 0.0 },   // 1 while the on-fire sand sweep/release effect is running
     u_fireFrontX: { value: -999 },  // current x position of the sweep front, in the wave plane's local space
     u_fireEdge: { value: 0.6 },     // softness of the sweep front
+    // 扉越しに見える部分は砂の描画から外す(代わりに glowMesh が描く)。扉の寸法は後で埋める。
+    u_doorZ: { value: ROOM_Z_MIN },
+    u_doorCenterX: { value: 0 },
+    u_doorCenterY: { value: 0 },
+    u_doorHalfW: { value: 0 },
+    u_doorHalfH: { value: 0 },
   };
 
   const waveGeo = new THREE.PlaneGeometry(WAVE_WIDTH, WAVE_DEPTH, WAVE_ROWS, WAVE_COLS);
@@ -181,8 +196,14 @@ export function createBananafish(opts = {}) {
       uniform float u_fireActive;
       uniform float u_fireFrontX;
       uniform float u_fireEdge;
+      uniform float u_doorZ;
+      uniform float u_doorCenterX;
+      uniform float u_doorCenterY;
+      uniform float u_doorHalfW;
+      uniform float u_doorHalfH;
       varying float vHeight;
       varying float vSandMix;
+      varying float vDoorA;
 
       float random(in vec2 st){
         return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
@@ -247,6 +268,29 @@ export function createBananafish(opts = {}) {
 
         vec4 mvm = modelViewMatrix * vec4(pos, 1.0);
         gl_Position = projectionMatrix * mvm;
+
+        // ── 扉越しに見える粒子は、砂の描画から外す ──
+        // (扉の向こうは glowMesh=発光する粒子+魚の影 が描く。判定は同じ式なので境目は一致する)
+        float throughDoor = 0.0;
+        float dzD = worldPos.z - cameraPosition.z;
+        if (abs(dzD) > 0.000001) {
+          float td = (u_doorZ - cameraPosition.z) / dzD;
+          if (td > 0.0 && td < 1.0) {
+            float ixD = cameraPosition.x + (worldPos.x - cameraPosition.x) * td;
+            float iyD = cameraPosition.y + (worldPos.y - cameraPosition.y) * td;
+            float ex = 0.02;
+            float wxD = smoothstep(u_doorCenterX - u_doorHalfW - ex, u_doorCenterX - u_doorHalfW + ex, ixD)
+                      - smoothstep(u_doorCenterX + u_doorHalfW - ex, u_doorCenterX + u_doorHalfW + ex, ixD);
+            float wyD = smoothstep(u_doorCenterY - u_doorHalfH - ex, u_doorCenterY - u_doorHalfH + ex, iyD)
+                      - smoothstep(u_doorCenterY + u_doorHalfH - ex, u_doorCenterY + u_doorHalfH + ex, iyD);
+            throughDoor = step(0.5, wxD * wyD);
+          }
+        }
+        vDoorA = 1.0;
+        if (throughDoor > 0.5) {
+          vDoorA = 0.0;
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // 画面外へ
+        }
       }
     `,
     fragmentShader: `
@@ -255,11 +299,13 @@ export function createBananafish(opts = {}) {
       uniform vec3 u_colorSkin;
       varying float vHeight;
       varying float vSandMix;
+      varying float vDoorA;
       void main(){
+        if (vDoorA < 0.02) discard;
         float t = smoothstep(0.0, 0.5, vHeight);
         vec3 waveColor = mix(u_colorA, u_colorB, t);
         vec3 color = mix(waveColor, u_colorSkin, vSandMix);
-        gl_FragColor = vec4(color, 0.95);
+        gl_FragColor = vec4(color, 0.95 * vDoorA);
       }
     `
   });
@@ -267,6 +313,11 @@ export function createBananafish(opts = {}) {
   waveMesh.rotation.x = -Math.PI / 2;
   waveMesh.position.set(0, 0.02, WAVE_BASE_Z);
   scene.add(waveMesh);
+
+  // ---------- fonts: 全テキストをTimes New Romanに統一(canvasテクスチャ用) ----------
+  // 基本はnormal(立体・標準の太さ)。イタリックにするのは Buddy / Seymour / 作品名(Seymour: an Introduction)のみ。
+  const FONT_FAMILY = "'Times New Roman', Times, serif";
+  const canvasFont = (px, italic = false) => `${italic ? 'italic ' : ''}${px}px ${FONT_FAMILY}`;
 
   // ---------- helper: canvas text ----------
   function makeTextCanvas(text, {w, h, font, color, blurPx, x, align='center'}){
@@ -286,7 +337,7 @@ export function createBananafish(opts = {}) {
 
   // ---------- "the young man": lives on the glass DOOR set into the back (opposite) wall ----------
   const TXT_W = 4.4, TXT_H = 1.6;
-  const textCanvas = makeTextCanvas('the young man', { w:1400, h:500, font:'italic 900 96px Georgia, serif', color:'#ffffff', blurPx:0 });
+  const textCanvas = makeTextCanvas('the young man', { w:1400, h:500, font:canvasFont(96), color:'#ffffff', blurPx:0 });
   const textTex = new THREE.CanvasTexture(textCanvas);
   textTex.colorSpace = THREE.SRGBColorSpace;
 
@@ -332,6 +383,28 @@ export function createBananafish(opts = {}) {
   // door frame dimensions (the back wall's opening) - a floor-to-near-ceiling glass door
   const DOOR_W = 2.6, DOOR_H = 3.4;
   const DOOR_CENTER_X = 0, DOOR_CENTER_Y = DOOR_H / 2; // flush with the floor
+  waveUniforms.u_doorCenterX.value = DOOR_CENTER_X;
+  waveUniforms.u_doorCenterY.value = DOOR_CENTER_Y;
+  waveUniforms.u_doorHalfW.value = DOOR_W / 2;
+  waveUniforms.u_doorHalfH.value = DOOR_H / 2;
+
+  // ---------- 初期カメラ: 扉(黒い鏡面)が画面いっぱいになるまで寄る ----------
+  // 扉の縁が画面に入ると背景が見えてしまうので、横幅・上端・下端の3条件から距離を決める
+  // (横長/縦長どちらの画面でも「黒い空間だけ」になる)。0.8 は縁との余裕。
+  function fitDoorRadius(){
+    const half = THREE.MathUtils.degToRad(camera.fov / 2);
+    const tilt = Math.PI / 2 - INITIAL_POLAR;                  // 目線の下向き角
+    const toDoor = ROOM_CENTER_Z - ROOM_Z_MIN;                 // 注視点 → 扉面
+    const base = camTarget.y + toDoor * Math.tan(tilt);        // 扉に接したときの目線の高さ
+    const dW = (DOOR_W / 2) / (Math.tan(half) * camera.aspect);
+    const dBottom = base / (Math.tan(tilt + half) - Math.tan(tilt));
+    const dTop = (DOOR_H - base) / (Math.tan(tilt) + Math.tan(Math.max(0.01, half - tilt)));
+    const d = Math.max(0.8, Math.min(dW, dBottom, dTop) * 0.8); // 扉面までの距離(m)
+    return (toDoor + d) / Math.sin(INITIAL_POLAR);
+  }
+  initialRadius = fitDoorRadius();
+  radius = initialRadius;
+  updateCamera();
 
   const floatingText = new THREE.Mesh(new THREE.PlaneGeometry(TXT_W, TXT_H), floatingTextMat);
   floatingText.position.set(DOOR_CENTER_X, DOOR_CENTER_Y + 0.35, ROOM_Z_MIN + 0.03);
@@ -381,6 +454,249 @@ export function createBananafish(opts = {}) {
   );
   doorEdge.position.copy(doorGlass.position);
   scene.add(doorEdge);
+
+  // ---------- 扉の外側の面: 光沢のある黒い鏡面 ----------
+  // 不透明で深度を書くので、扉側から見ると背後の窓枠・ガラス・旧テキストなどは隠れる。
+  // 向こう側の粒子の床だけが、シェーダ側(waveMat)で深度を手前に出して、この面の上に見える。
+  const doorFaceMat = new THREE.ShaderMaterial({
+    side: THREE.FrontSide,
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vWorldPos;
+      varying vec3 vNormalW;
+      void main(){
+        vUv = uv;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vNormalW = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      varying vec3 vWorldPos;
+      varying vec3 vNormalW;
+      void main(){
+        vec3 V = normalize(cameraPosition - vWorldPos);
+        float fres = pow(1.0 - clamp(dot(V, normalize(vNormalW)), 0.0, 1.0), 3.0);
+        // 視点を動かすと流れる、斜めの淡い光沢の帯
+        float s = vUv.x - vUv.y * 0.35 + V.x * 0.9;
+        float band = exp(-pow((s - 0.5) * 5.0, 2.0));
+        vec3 base = vec3(0.012, 0.014, 0.018);
+        vec3 sheen = vec3(0.55, 0.64, 0.74) * (band * 0.07 + fres * 0.30);
+        gl_FragColor = vec4(base + sheen, 1.0);
+      }
+    `
+  });
+  const doorFace = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_W, DOOR_H), doorFaceMat);
+  doorFace.rotation.y = Math.PI; // 法線を -Z(扉の外側)へ。裏側(窓側)からは描かれず、元のガラスのまま
+  doorFace.position.set(DOOR_CENTER_X, DOOR_CENTER_Y, ROOM_Z_MIN - 0.005);
+  scene.add(doorFace);
+
+  // ---------- 発光する黄色い粒子(扉越しに見える床) + 六匹の魚の「影」 ----------
+  // 砂の粒子(waveMesh)とは別メッシュ。扉越しに見える範囲だけを、加算合成の光の粒で描く。
+  //  - 粒は床全体に、砂と同じ範囲(部屋の床)で敷く。魚の影が細くても読めるよう、砂より細かく(間隔0.04m)
+  //  - 距離による消え方は無し(砂は遠くまで見える)。代わりに遠いほど1粒を暗くして、
+  //    地平線近くで粒が重なって白く飛ばないようにしている
+  //  - 魚 = 粒が抜けた細い魚形の影。縁はやわらかい(半影)
+  // 配置は砂(waveMesh の PlaneGeometry 108x108)と完全に同じ格子: 粒の数(109x109)も位置も一致する。
+  //   x = 端から WAVE_WIDTH/108 刻み、z = 端から WAVE_DEPTH/108 刻み(PlaneGeometry の頂点と同じ)
+  const glowGeo = (() => {
+    const nx = WAVE_COLS + 1;
+    const nz = WAVE_ROWS + 1;
+    const pos = new Float32Array(nx * nz * 3);
+    let k = 0;
+    for (let iz = 0; iz < nz; iz++){
+      for (let ix = 0; ix < nx; ix++){
+        pos[3*k]     = ROOM_X_MIN + ix * (WAVE_WIDTH / WAVE_COLS);
+        pos[3*k + 1] = 0.02;                                   // 砂の床(waveMesh)と同じ高さ
+        pos[3*k + 2] = ROOM_Z_MIN + iz * (WAVE_DEPTH / WAVE_ROWS);
+        k++;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    return g;
+  })();
+
+  const glowUniforms = {
+    u_time: waveUniforms.u_time,                 // 砂の側と同じ値を共有
+    u_doorZ: waveUniforms.u_doorZ,
+    u_doorCenterX: waveUniforms.u_doorCenterX,
+    u_doorCenterY: waveUniforms.u_doorCenterY,
+    u_doorHalfW: waveUniforms.u_doorHalfW,
+    u_doorHalfH: waveUniforms.u_doorHalfH,
+    u_pxScale: { value: 1 },                     // 距離1での 1m あたりのpx(毎フレーム更新)
+    u_pixelRatio: { value: renderer.getPixelRatio() },
+    u_gain: { value: 0.8 },                      // 発光の強さ(全体)
+    u_floorBox: { value: new THREE.Vector4(ROOM_X_MIN, ROOM_X_MAX, ROOM_Z_MAX, 0.9) }, // 床の左右・奥の端と、縁のぼかし幅
+    u_fish: { value: Array.from({ length: 6 }, () => new THREE.Vector4()) }, // x,y=床上の(x,z) / z=進行方向 / w=大きさ
+  };
+
+  const glowMat = new THREE.ShaderMaterial({
+    uniforms: glowUniforms,
+    transparent: true,
+    depthWrite: false,
+    // 加算合成は使わない(通常のアルファ合成)。発光は粒自体の芯+にじみで表現する
+    vertexShader: `
+      uniform float u_time;
+      uniform float u_doorZ;
+      uniform float u_doorCenterX;
+      uniform float u_doorCenterY;
+      uniform float u_doorHalfW;
+      uniform float u_doorHalfH;
+      uniform float u_pxScale;
+      uniform float u_pixelRatio;
+      uniform vec4 u_floorBox;
+      uniform vec4 u_fish[6];
+      varying float vAlpha;
+
+      const float FISH_LEN = 0.35;  // 影の半分の長さ(m, 大きさ1のとき)。全長は約0.7m
+      const float FISH_WID = 0.08;  // 影の半分の幅(m)。細身
+      const float GLOW_SIZE = 0.05; // 粒1つの光の直径(m)
+
+      // 魚の影(0=影なし 〜 1=影の中)。尾びれなしの、細長く平たい凸レンズ(両端がとがった形)
+      float fishShadow(vec2 d, vec4 f){
+        vec2 dir = vec2(cos(f.z), sin(f.z));
+        float a = dot(d, dir) / (FISH_LEN * f.w);                 // 頭 +1 / 尾 -1
+        float p = dot(d, vec2(-dir.y, dir.x)) / (FISH_WID * f.w); // 横方向(最大幅=1)
+        float w = max(0.0, 1.0 - a * a);                          // レンズの半幅(放物線)
+        float inside = 1.0 - smoothstep(0.0, 0.4, abs(p) - w);    // 縁はやわらかい半影
+        return inside * (1.0 - smoothstep(1.0, 1.2, abs(a)));     // 両端の外は影なし
+      }
+
+      void main(){
+        vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+
+        // 扉越しに見える粒だけ(カメラからの視線が扉の開口を通るか)。砂側と同じ判定。
+        float seen = 0.0;
+        float dz = wp.z - cameraPosition.z;
+        if (abs(dz) > 0.000001) {
+          float td = (u_doorZ - cameraPosition.z) / dz;
+          if (td > 0.0 && td < 1.0) {
+            float ix = cameraPosition.x + (wp.x - cameraPosition.x) * td;
+            float iy = cameraPosition.y + (wp.y - cameraPosition.y) * td;
+            float ex = 0.03;
+            float wx = smoothstep(u_doorCenterX - u_doorHalfW - ex, u_doorCenterX - u_doorHalfW + ex, ix)
+                     - smoothstep(u_doorCenterX + u_doorHalfW - ex, u_doorCenterX + u_doorHalfW + ex, ix);
+            float wy = smoothstep(u_doorCenterY - u_doorHalfH - ex, u_doorCenterY - u_doorHalfH + ex, iy)
+                     - smoothstep(u_doorCenterY + u_doorHalfH - ex, u_doorCenterY + u_doorHalfH + ex, iy);
+            seen = clamp(wx * wy, 0.0, 1.0);
+          }
+        }
+        if (seen < 0.01) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          gl_PointSize = 0.0;
+          vAlpha = 0.0;
+          return;
+        }
+
+        // 魚の影(床の上の位置で判定。粒のゆらぎには引きずられない)
+        float shadow = 0.0;
+        for (int i = 0; i < 6; i++) {
+          shadow = max(shadow, fishShadow(wp.xz - u_fish[i].xy, u_fish[i]));
+        }
+
+        vec4 mv = viewMatrix * vec4(wp, 1.0);
+        float dist = max(0.1, -mv.z);
+
+        float fe = u_floorBox.w;
+        float edge = smoothstep(u_floorBox.x, u_floorBox.x + fe, wp.x)
+                   * (1.0 - smoothstep(u_floorBox.y - fe, u_floorBox.y, wp.x))
+                   * (1.0 - smoothstep(u_floorBox.z - fe * 4.0, u_floorBox.z, wp.z)); // 床の端は闇へ溶ける(奥は浅い角度で見えるので広めに)
+        float distBright = clamp(4.0 / dist, 0.18, 1.0); // 遠いほど少し暗く(奥で詰まって黄色い面にならない)
+
+        vAlpha = seen * (1.0 - shadow) * edge * distBright;
+        gl_PointSize = clamp(GLOW_SIZE * u_pxScale / dist,
+                             3.0 * u_pixelRatio, 26.0 * u_pixelRatio);
+        gl_Position = projectionMatrix * mv;
+        // 扉の黒い鏡面(深度を書く)より手前に描く。窓枠や背後の物は鏡面に隠れる。
+        gl_Position.z = -0.999 * gl_Position.w;
+      }
+    `,
+    fragmentShader: `
+      uniform float u_gain;
+      varying float vAlpha;
+      void main(){
+        if (vAlpha < 0.003) discard;
+        float r2 = dot(gl_PointCoord - vec2(0.5), gl_PointCoord - vec2(0.5)) * 4.0; // 0=中心 〜 1=縁
+        if (r2 > 1.0) discard;
+        // 小さく鋭い芯 + 広く柔らかいにじみ(ブルーム)。芯は白っぽい黄色、にじみは濃い黄色
+        float core = exp(-r2 * 12.0);
+        float halo = exp(-r2 * 3.5);
+        float g = clamp(core + halo * 0.5, 0.0, 1.0) * (1.0 - smoothstep(0.7, 1.0, r2));
+        vec3 col = mix(vec3(1.0, 0.72, 0.12), vec3(1.0, 0.95, 0.62), core);
+        gl_FragColor = vec4(col, g * vAlpha * u_gain);
+      }
+    `
+  });
+  const glowMesh = new THREE.Points(glowGeo, glowMat);
+  glowMesh.frustumCulled = false; // 位置はシェーダ側で決めるので、カリングさせない
+  scene.add(glowMesh);
+
+  // 六匹の魚(=影)の動き。床の上の実在の位置を、それぞれ違う楕円軌道で動く。
+  // 奥の魚ほど大きい(遠くでも読めるように)。
+  const FISH_SPECS = [
+    { zc: ROOM_Z_MIN + 1.8, cx:-0.6, ax:0.8, az:0.5, w: 0.50, ph:0.0, s:1.00 },
+    { zc: ROOM_Z_MIN + 3.0, cx: 0.5, ax:0.9, az:0.6, w:-0.42, ph:1.9, s:1.05 },
+    { zc: ROOM_Z_MIN + 4.2, cx:-0.3, ax:1.3, az:0.7, w: 0.36, ph:3.4, s:1.15 },
+    { zc: ROOM_Z_MIN + 5.4, cx: 0.9, ax:1.4, az:0.8, w:-0.32, ph:4.6, s:1.25 },
+    { zc: ROOM_Z_MIN + 6.6, cx:-1.0, ax:1.6, az:0.9, w: 0.28, ph:2.6, s:1.40 },
+    { zc: ROOM_Z_MIN + 7.8, cx: 0.2, ax:1.9, az:1.0, w:-0.25, ph:5.6, s:1.55 },
+  ];
+  function updateDoorFish(t){
+    const U = glowUniforms.u_fish.value;
+    FISH_SPECS.forEach((f, i) => {
+      const th = f.w * t + f.ph;
+      const x = f.cx + f.ax * Math.cos(th);
+      const z = f.zc + f.az * Math.sin(th);
+      const vx = -f.ax * f.w * Math.sin(th);
+      const vz =  f.az * f.w * Math.cos(th);
+      U[i].set(x, z, Math.atan2(vz, vx), f.s); // 進行方向を向く
+    });
+  }
+
+  // 発光する文字: 白い芯 + 白いにじみ(粒子と同じ「芯+ハロー」の構成。色だけ白)
+  function makeGlowTextCanvas(text, { w, h, font }){
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    ctx.font = font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const layers = [ // [にじみの半径(px), 色, 重ね回数]
+      [70, 'rgba(255,255,255,0.50)', 2],  // 広いハロー
+      [26, 'rgba(255,255,255,0.80)', 1],  // 近いにじみ
+    ];
+    for (const [blur, color, n] of layers){
+      ctx.shadowColor = color; ctx.shadowBlur = blur; ctx.fillStyle = color;
+      for (let k = 0; k < n; k++) ctx.fillText(text, w / 2, h / 2);
+    }
+    ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#ffffff';            // 芯
+    ctx.fillText(text, w / 2, h / 2);
+    return cv;
+  }
+
+  // ---------- 発光する "Did you see more glass?": 元の "the young man" の位置(鏡面の手前) ----------
+  const MSG_W = 1.6, MSG_CV_W = 2048, MSG_CV_H = 384, MSG_H = MSG_W * MSG_CV_H / MSG_CV_W; // 光のにじみぶん、上下に余白を持たせたキャンバス
+  const msgTex = new THREE.CanvasTexture(
+    makeGlowTextCanvas('Did you see more glass?', { w:MSG_CV_W, h:MSG_CV_H, font:canvasFont(150) })
+  );
+  msgTex.colorSpace = THREE.SRGBColorSpace;
+  const msgMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(MSG_W, MSG_H),
+    new THREE.MeshBasicMaterial({ map: msgTex, transparent: true, depthWrite: false, fog: false, toneMapped: false })
+  );
+  msgMesh.rotation.y = Math.PI; // 扉の外側から読める向き。FrontSideのみなので窓側からは見えない
+  msgMesh.position.set(floatingText.position.x, floatingText.position.y, ROOM_Z_MIN - 0.012);
+  scene.add(msgMesh);
+  // 縦長画面などで画面からはみ出すときだけ縮める
+  function updateMessageFit(){
+    const d = camera.position.distanceTo(msgMesh.position);
+    const visW = 2 * d * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect;
+    msgMesh.scale.setScalar(Math.min(1, (visW * 0.86) / (MSG_W * 0.72)));
+  }
 
   // ---------- crack overlay: the door glass shatters at the point of impact, then heals as the sand effect releases ----------
   function makeCrackCanvas(){
@@ -433,7 +749,7 @@ export function createBananafish(opts = {}) {
   scene.add(crackPlane);
 
   // ---------- room number, mounted above the door ----------
-  const roomNumberCanvas = makeTextCanvas('507', { w:512, h:256, font:'600 150px Georgia, serif', color:'#2a2a28', blurPx:0 });
+  const roomNumberCanvas = makeTextCanvas('507', { w:512, h:256, font:canvasFont(150), color:'#2a2a28', blurPx:0 });
   const roomNumberTex = new THREE.CanvasTexture(roomNumberCanvas);
   roomNumberTex.colorSpace = THREE.SRGBColorSpace;
   const roomNumberMat = new THREE.MeshBasicMaterial({ map:roomNumberTex, transparent:true, depthWrite:false, side:THREE.BackSide });
@@ -460,7 +776,7 @@ export function createBananafish(opts = {}) {
   let seymourBoxUV = null;
   (function(){
     const ctx = panelCanvas.getContext('2d');
-    ctx.font = 'italic 52px Georgia, serif';
+    ctx.font = canvasFont(52, true); // Buddy / Seymour はイタリック
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const buddyX = 460, buddyY = 256;
@@ -544,7 +860,7 @@ export function createBananafish(opts = {}) {
   scene.add(panelEdge);
 
   // ---------- simple twin beds: two rounded mattress-top planes, window side, at the window's sill height ----------
-  // visible only when actually seen through the door opening (see bedSeenThroughDoor below)
+  // visible only when actually seen through the door opening (see bedPartlySeen below)
   function roundedRectShape(w, h, r){
     const hw = w/2, hh = h/2;
     const shape = new THREE.Shape();
@@ -562,7 +878,8 @@ export function createBananafish(opts = {}) {
   const BED_SILL_Y = PANEL_CENTER_Y - PANEL_HEIGHT/2; // matches the window's bottom frame
   const BED_EACH_W = 1.9, BED_DEPTH = 3.2, BED_GAP = 0.3, BED_CORNER = 0.22;
   const BED_Z = ROOM_Z_MAX - 2.6; // room center, toward the window side
-  const bedMat = new THREE.MeshStandardMaterial({ color:0xf6efe4, roughness:0.85, metalness:0.0, side:THREE.DoubleSide, transparent:true, opacity:0 });
+  // 真っ白。ライティング(環境光・反射)を受けないMeshBasicMaterialにして、灰色に沈まないようにする
+  const bedMat = new THREE.MeshBasicMaterial({ color:0xffffff, side:THREE.DoubleSide, transparent:true, opacity:0, fog:false, toneMapped:false });
   const bedGeo = new THREE.ShapeGeometry(roundedRectShape(BED_EACH_W, BED_DEPTH, BED_CORNER));
   const bedLeft = new THREE.Mesh(bedGeo, bedMat);
   bedLeft.rotation.x = -Math.PI/2;
@@ -575,20 +892,36 @@ export function createBananafish(opts = {}) {
   bedRight.visible = false;
   scene.add(bedRight);
 
-  // beds only read as visible when the viewer's actual sightline to them threads through the door
-  // opening (not just from anywhere on the "door side") - project the line from the camera to the
-  // beds onto the door's plane and check it lands inside the door's rectangular opening.
-  const BED_CENTER = new THREE.Vector3(0, BED_SILL_Y + 0.1, BED_Z);
-  function bedSeenThroughDoor(camPos){
-    const dz = BED_CENTER.z - camPos.z;
-    if (Math.abs(dz) < 1e-6) return 0;
-    const t = (ROOM_Z_MIN - camPos.z) / dz;
-    if (t <= 0 || t >= 1) return 0; // door plane isn't between the camera and the beds
-    const x = camPos.x + (BED_CENTER.x - camPos.x) * t;
-    const y = camPos.y + (BED_CENTER.y - camPos.y) * t;
-    const inX = x > DOOR_CENTER_X - DOOR_W/2 && x < DOOR_CENTER_X + DOOR_W/2;
-    const inY = y > 0 && y < DOOR_H;
-    return (inX && inY) ? 1 : 0;
+  // ベッドは「扉からも窓からも、ベッドのどの部分も見えない」ときだけ表示する。
+  // 中心1点ではなく、2台のベッド全面を細かくサンプリングして、1点でも扉/窓の開口越しに
+  // 見える視線があれば即座に消す(開口に少し余裕=BED_PADを足して、縁ぎりぎりでも消す)。
+  const BED_PAD = 0.25;
+  const BED_SAMPLES = (() => {
+    const pts = [];
+    const halfW = BED_EACH_W + BED_GAP / 2;   // 2台ぶんの左右の端
+    const step = 0.25;
+    for (let x = -halfW; x <= halfW + 1e-6; x += step){
+      for (let z = BED_Z - BED_DEPTH / 2; z <= BED_Z + BED_DEPTH / 2 + 1e-6; z += step){
+        pts.push(new THREE.Vector3(x, BED_SILL_Y, z));
+      }
+    }
+    return pts;
+  })();
+  function seenThroughOpening(camPos, p, planeZ, cx, cy, hw, hh){
+    const dz = p.z - camPos.z;
+    if (Math.abs(dz) < 1e-6) return false;
+    const tt = (planeZ - camPos.z) / dz;
+    if (tt <= 0 || tt >= 1) return false; // 開口の面がカメラと点の間にない
+    const x = camPos.x + (p.x - camPos.x) * tt;
+    const y = camPos.y + (p.y - camPos.y) * tt;
+    return Math.abs(x - cx) < hw + BED_PAD && Math.abs(y - cy) < hh + BED_PAD;
+  }
+  function bedPartlySeen(camPos){
+    for (const p of BED_SAMPLES){
+      if (seenThroughOpening(camPos, p, ROOM_Z_MIN, DOOR_CENTER_X, DOOR_CENTER_Y, DOOR_W / 2, DOOR_H / 2)) return true;
+      if (seenThroughOpening(camPos, p, ROOM_Z_MAX, PANEL_CENTER_X, PANEL_CENTER_Y, PANEL_WIDTH / 2, PANEL_HEIGHT / 2)) return true;
+    }
+    return false;
   }
 
   // "the young man" only reads green when the camera's sightline to it actually threads through
@@ -613,17 +946,20 @@ export function createBananafish(opts = {}) {
   let windowSeenCurrent = 0;
   function updateWaveLines(t){
     waveUniforms.u_time.value = t;
+    glowUniforms.u_pxScale.value = canvas.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))); // 光の粒の大きさを距離に合わせる
+    updateDoorFish(t);
     const sandTarget = (camera.position.z < ROOM_CENTER_Z) ? 1 : 0;
     sandModeCurrent += (sandTarget - sandModeCurrent) * 0.08;
     panelMat.uniforms.uTextVisible.value = 1 - sandModeCurrent; // Buddy/Seymour: window side only
     const windowSeenTarget = textSeenThroughWindow(camera.position);
     windowSeenCurrent += (windowSeenTarget - windowSeenCurrent) * 0.15; // green only when actually seen through the window
     floatingTextMat.uniforms.uWindowSeen.value = windowSeenCurrent;
-    const bedTarget = bedSeenThroughDoor(camera.position);       // beds: only when the sightline actually passes through the door opening
+    // ベッド: 扉越し・窓越しに見えていない(=側面側から見ている)ときだけ表示
+    const bedTarget = bedPartlySeen(camera.position) ? 0 : 1;
     if (bedTarget > bedVisCurrent) {
-      bedVisCurrent += (bedTarget - bedVisCurrent) * 0.12; // fade in gently once the door lines up
+      bedVisCurrent += (bedTarget - bedVisCurrent) * 0.12; // 側面側へ回り込んだらゆっくり現れる
     } else {
-      bedVisCurrent = bedTarget; // snap off immediately the moment the sightline leaves the door - no lingering/lag
+      bedVisCurrent = bedTarget; // 扉/窓に視線が重なった瞬間に即座に消す(残像なし)
     }
     bedMat.opacity = bedVisCurrent;
     bedLeft.visible = bedVisCurrent > 0.02;
@@ -679,8 +1015,16 @@ export function createBananafish(opts = {}) {
     ctx.lineJoin = 'round';
     let y = startY;
     for (const line of lines){
-      ctx.strokeText(line, startX, y);
-      ctx.fillText(line, startX, y);
+      // *...* で囲んだ部分だけイタリック(textAlign='left'前提で、runを左から順に並べて描く)
+      const parts = line.split(/\*([^*]+)\*/); // 奇数番目が*...*の中身
+      let x = startX;
+      parts.forEach((part, i) => {
+        if (!part) return;
+        ctx.font = canvasFont(52, i % 2 === 1);
+        ctx.strokeText(part, x, y);
+        ctx.fillText(part, x, y);
+        x += ctx.measureText(part).width;
+      });
       y += lineHeight;
     }
   }
@@ -691,6 +1035,23 @@ export function createBananafish(opts = {}) {
     return (canvasHeight - numLines * lineHeight) / 2;
   }
 
+  // 縦方向(centeredQuoteStartY)と同様に、横方向もブロック全体をキャンバス中央に寄せる。
+  // 行は左揃えのまま、いちばん長い行の幅を基準に開始X座標を決める(*...*のイタリック幅も含めて計測)。
+  function centeredQuoteStartX(ctx, canvasWidth, lines){
+    let maxW = 0;
+    for (const line of lines){
+      const parts = line.split(/\*([^*]+)\*/);
+      let lw = 0;
+      parts.forEach((part, i) => {
+        if (!part) return;
+        ctx.font = canvasFont(52, i % 2 === 1);
+        lw += ctx.measureText(part).width;
+      });
+      maxW = Math.max(maxW, lw);
+    }
+    return Math.max(0, (canvasWidth - maxW) / 2);
+  }
+
   const QUOTE_W = 7.2, QUOTE_H = 4.0;
   const QUOTE_SHOW_MS = 15000;
 
@@ -699,21 +1060,18 @@ export function createBananafish(opts = {}) {
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');
-    ctx.font = 'italic 52px Georgia, serif';
+    ctx.font = canvasFont(52);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const lines = [
-      '\u201cthe young man, the \u2018Seymour,\u2019 who did the',
-      'walking and talking in that early story, not',
-      'to mention the shooting, was not Seymour at',
-      'all but, oddly, someone with a striking',
-      'resemblance to \u2014 alley oop, I\u2019m afraid \u2014',
-      'myself.\u201d',
+      '\u201cthe young man, the \u2018Seymour,\u2019 who did the walking and talking in that',
+      'early story, not to mention the shooting, was not Seymour at all but, oddly,',
+      'someone with a striking resemblance to \u2014 alley oop, I\u2019m afraid \u2014 myself.\u201d',
       '',
-      '\u2014Seymour: an Introduction',
+      '\u2014*Seymour: an Introduction*',
     ];
     const lineHeight = 76;
-    drawGrayQuoteLines(ctx, lines, 60, centeredQuoteStartY(h, lines.length, lineHeight), lineHeight);
+    drawGrayQuoteLines(ctx, lines, centeredQuoteStartX(ctx, w, lines), centeredQuoteStartY(h, lines.length, lineHeight), lineHeight);
     return cv;
   }
   const quoteTex = new THREE.CanvasTexture(makeQuoteCanvas());
@@ -743,18 +1101,18 @@ export function createBananafish(opts = {}) {
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');
-    ctx.font = 'italic 52px Georgia, serif';
+    ctx.font = canvasFont(52);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const lines = [
-      '\u201cI also give you my word of honor that one',
-      'of us will be present at the other chap\u2019s',
-      'departure for various reasons.\u201d',
+      '\u201cThe other poem, the last one in the collection, is about a young',
+      'suburban widower who sits down on his patch of lawn one night,',
+      '\u2026 and he lets her bite his left hand and he looks at the moon.\u201d',
       '',
-      '\u2014Hapworth 16, 1924',
+      '\u2014*Seymour: an Introduction*',
     ];
     const lineHeight = 76;
-    drawGrayQuoteLines(ctx, lines, 60, centeredQuoteStartY(h, lines.length, lineHeight), lineHeight);
+    drawGrayQuoteLines(ctx, lines, centeredQuoteStartX(ctx, w, lines), centeredQuoteStartY(h, lines.length, lineHeight), lineHeight);
     return cv;
   }
   const seymourQuoteTex = new THREE.CanvasTexture(makeSeymourQuoteCanvas());
@@ -788,7 +1146,7 @@ export function createBananafish(opts = {}) {
     'fired a bullet through his right temple.',
     {
       w: 1800, h: 260,
-      font: 'italic 52px Georgia, serif',
+      font: canvasFont(52),
       color: '#000000',
       blurPx: 0,
       x: 900,
@@ -859,7 +1217,7 @@ export function createBananafish(opts = {}) {
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');
     ctx.fillStyle = color;
-    ctx.font = 'italic 700 82px Georgia, serif';
+    ctx.font = canvasFont(82);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('7.65', w / 2, h / 2);
@@ -946,6 +1304,33 @@ export function createBananafish(opts = {}) {
   const groundPlane = new THREE.Plane(new THREE.Vector3(0,1,0), -0.02);
   let dragging = false, downPos = {x:0,y:0}, moved = false, lastPos = {x:0,y:0};
 
+  // ★ 追加: カーソル。ふだんは右手(righthand-pointer.cur)で固定、クリックできる場所の上だけ左手(lefthand-pointer.cur。指差しの右手を反転したもの)にする。
+  //   canvasへ直接指定するので、style.css側の十字カーソル(crosshair)指定より優先される。
+  //   .curは中にホットスポットを持っているので、url()の後ろに座標は書かない。
+  //   ※ 画像が読めないときは pointer(OS標準の手)に戻る。
+  const CURSOR_DEFAULT = "url('.//assets/cur/lefthand.cur'), pointer";
+  const CURSOR_CLICKABLE = "url('.//assets/cur/righthand.cur'), pointer";
+  function setCursor(c){ if (canvas.style.cursor !== c) canvas.style.cursor = c; }
+
+  // 「いまクリックしたら何かが起きる場所か」。tryClickPanelWord / tryFireAtPointer と同じ条件で判定する
+  // (副作用なし。クリックできない場所で左手にならないよう、条件はクリック側とそろえてある)。
+  function isClickableAt(p){
+    pointerNDC.x = (p.x / innerWidth) * 2 - 1;
+    pointerNDC.y = -(p.y / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointerNDC, camera);
+    if (camera.position.z < ROOM_CENTER_Z){ // 扉側: 青い "the young man"
+      return !!raycaster.intersectObject(floatingText, true)[0];
+    }
+    // 窓側: "Buddy" / "Seymour" の文字、または(まだ撃っていなければ)扉のガラス
+    const hits = raycaster.intersectObject(panel);
+    if (hits.length > 0 && hits[0].uv){
+      const uv = hits[0].uv;
+      if (buddyBoxUV && uv.x >= buddyBoxUV.uMin && uv.x <= buddyBoxUV.uMax && uv.y >= buddyBoxUV.vMin && uv.y <= buddyBoxUV.vMax) return true;
+      if (seymourBoxUV && uv.x >= seymourBoxUV.uMin && uv.x <= seymourBoxUV.uMax && uv.y >= seymourBoxUV.vMin && uv.y <= seymourBoxUV.vMax) return true;
+    }
+    return !hasFired && raycaster.intersectObject(doorGlass).length > 0;
+  }
+
   function updateHover(p){
     pointerNDC.x = (p.x / innerWidth) * 2 - 1;
     pointerNDC.y = -(p.y / innerHeight) * 2 + 1;
@@ -966,6 +1351,10 @@ export function createBananafish(opts = {}) {
   function onPointerMove(e){
     const p = getPos(e);
     updateHover(p);
+    // カーソル: 視点をドラッグしている間は右手のまま。それ以外はクリックできる場所の上だけ左手。
+    if (overlay.classList.contains('show')){
+      setCursor(!(dragging && moved) && isClickableAt(p) ? CURSOR_CLICKABLE : CURSOR_DEFAULT);
+    }
     if(!dragging) return;
     const dx = p.x - lastPos.x, dy = p.y - lastPos.y;
     if (Math.abs(p.x-downPos.x) > 4 || Math.abs(p.y-downPos.y) > 4) moved = true;
@@ -1068,12 +1457,14 @@ export function createBananafish(opts = {}) {
     updateQuoteReveal(now);
     updateSeymourQuoteReveal(now);
     updateDoorQuoteReveal(now);
+    updateMessageFit();
     renderer.render(scene, camera);
   }
 
   // show()のたびに演出をまっさらな状態へ戻す(billiardTableのstartBreak()相当)
   function reset(){
-    radius = INITIAL_RADIUS; azimuth = INITIAL_AZIMUTH; polar = INITIAL_POLAR;
+    initialRadius = fitDoorRadius(); // 画面の縦横比が変わっていても、毎回「扉が画面いっぱい」になる距離へ
+    radius = initialRadius; azimuth = INITIAL_AZIMUTH; polar = INITIAL_POLAR;
     updateCamera();
     updateMuzzleVisibility();
 
@@ -1110,6 +1501,7 @@ export function createBananafish(opts = {}) {
   function show() {
     reset();
     overlay.classList.add('show');
+    setCursor(CURSOR_DEFAULT); // 開いた直後は右手(前回の左手が残らないように)
     getSourceCaption().setText(BANANAFISH_WORK); // ページを開いている間ずっと表示
     if (!rafId) loop();
   }
