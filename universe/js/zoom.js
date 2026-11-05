@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SYMBOL_ASSETS, symbolWorldSize, symbolWorldPosition } from './symbolAssets.js';
 
-// ── Phase3準備: 数式クリックでのズーム ──────────────────────
+// ── Phase2準備: 数式クリックでのズーム ──────────────────────
 // Carousel(③④)が加わると横幅が増えるので、あらかじめiħ側(左)に
 // 「予約席」の幅を確保しておく。
 export const CAROUSEL_RESERVE_WORLD_WIDTH = symbolWorldSize('i').width + symbolWorldSize('hbar').width;
