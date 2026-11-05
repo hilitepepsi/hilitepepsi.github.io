@@ -3,7 +3,13 @@ import {
   GALAXY_GROWTH_MAX_STEPS,
   setGalaxyGrowth, getGalaxyRandomStarPoint,
 } from './galaxy.js';
+import * as GalaxyModule from './galaxy.js'; // GALAXY_TOTAL_PARTICLE_COUNTを(エクスポートされていれば)読むため。無くてもエラーにならない
 import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
+import { NOTE_IMAGE_DATA_URL } from './noteImage.js'; // 音符の画像(EighthBanana_.pngを透過・白一色にしたもの)
+
+// 銀河の星(粒)の総数。「1クリック=星1個」の換算に使う。galaxy.jsのGALAXY_TOTAL_PARTICLE_COUNTを使い、
+// 取れなければ92万個(従来コメントの想定値)で代用する。
+const TOTAL_STAR_COUNT = Number(GalaxyModule.GALAXY_TOTAL_PARTICLE_COUNT) || 920000;
 
 // ══════════════════════════════════════════════════════════════
 // ── 銀河の「星が減る」演出: starburstをクリック → 音符がカメラ側から飛んできて、
@@ -21,8 +27,9 @@ import { createCaptionBox, makeCaptionController, getSourceCaption } from './cap
 //   1. 「I'm saving them.」を画面に出す(以後ずっと表示したまま)
 //   2. いま銀河に残っている星のどれか(galaxy.jsのgetGalaxyRandomStarPoint)が、その場でひと粒の
 //      光になって銀河を離れ、カメラのほうへ向かって飛んでくる(この瞬間に、銀河の星が1個ぶん減る)
-//   3. 近づくにつれて、光の点はだんだん音符(♪♫♩♬)の形になり、カメラのすぐ手前(視野の中の
-//      ランダムな位置)まで来て、ふわりと消える
+//   3. 近づくにつれて、光の点はだんだん音符(EighthBanana_.pngの、バナナの音符)の形になり、
+//      カメラのすぐ手前(視野の中のランダムな位置)まで来て、ふわりと消える
+//      ★ 2026-10-30 変更(ご指示反映): 1クリックで消える星は1個・飛んでくる音符も1個。色は白よりの黄色。
 //   4. 全部の音符が飛び立つと、星の減り具合が1ステップ進んだ状態になる
 // ★ 2026-10-11 変更(ご指示反映): 減り具合(ステップ数)は「サイト全体の累計」。
 //   訪問者の誰かがstarburstをクリックするたびに、サーバー(galaxy-counter-worker.js)の合計が
@@ -50,15 +57,13 @@ import { createCaptionBox, makeCaptionController, getSourceCaption } from './cap
 const GROWTH_API_URL = '';
 const API_TIMEOUT_MS = 1500; // クリック時、サーバーの返事を待つ最大時間。超えたらこの端末だけで育てる
 
-// 「何クリックで星がすべてなくなる(バルジだけになる)か」(=GALAXY_GROWTH_MAX_STEPS)。仮値。
-// 1クリックで消える星の数 = galaxy.jsのGALAXY_TOTAL_PARTICLE_COUNT ÷ この値(92万個÷10万 ≒ 9個)。
-// 「1クリック=ちょうど星1個」にしたいときは、この値をGALAXY_TOTAL_PARTICLE_COUNTと同じにする。
-// 目安: 想定する訪問数 × 「starburstまで辿り着いてクリックする人の割合」。
-// 例: 20万訪問・半数がクリック → 10万。実際の数字を見ながら、あとから変えてよい。
-const CLICKS_TO_COMPLETE = 100000;
-// サーバーに繋がない(GROWTH_API_URLが空)ときの「1クリックの重さ」。確認用に、1クリック=1ステップ
-// (全体の1/100=星の1%)にして、1回の演出で減りが目に見えるようにしてある。
-const LOCAL_PREVIEW_CLICKS_PER_STEP = 1;
+// 「何クリックで星がすべてなくなる(バルジだけになる)か」(=GALAXY_GROWTH_MAX_STEPS)。
+// ★ 2026-10-30 変更(ご指示反映): 「星はクリックにつき一つ消滅」。1クリックで消える星の数 =
+//   星の総数 ÷ この値 なので、この値を星の総数と同じにして、1クリック=ちょうど星1個にした。
+//   (サーバーに繋ぐ・繋がないに関わらず同じ換算。以前あった「繋がない時だけ1クリック=星の1%」は廃止)
+//   ※ 星1個は全体から見るとごく小さいので、銀河の見た目の変化は(ほぼ)分からない。
+//     演出としては、消えた星の位置から音符が飛んでくる形になる。
+const CLICKS_TO_COMPLETE = TOTAL_STAR_COUNT;
 const FETCH_CACHE_MINUTES = 10; // 最新の合計を取りに行く間隔の下限(この間は、最後に知っていた値を使う)
 
 const STORAGE_KEY = 'galaxyStarsSavedSteps';   // 最後に知っていた「減り具合」(旧仕様の'galaxyGrowthSteps'とは単位が違うので、キーを変えてある)(サーバーに繋がらないとき・次回起動の初期表示用)
@@ -73,9 +78,8 @@ let savingWorkActive = false; // 出典を出している状態か(他の演出�
 
 const CONTRIBUTIONS_PER_VISIT = 1;  // 1回の訪問で育てられる回数(2回目以降のクリックは何も起きない。仮値)
 
-const NOTE_COUNT = 24;                          // 1回のクリックで飛ばす音符の数(仮値)
-const NOTE_GLYPHS = ['♪', '♫', '♩', '♬'];
-const NOTE_COLOR = 0xffe2a0;                    // 音符・粒子の色(仮値)
+const NOTE_COUNT = 1;                           // 1回のクリックで飛ばす音符の数(ご指示: 1個。消える星も1個)
+const NOTE_COLOR = 0xfff2b8;                    // 音符・粒子の色。白よりの黄色(黄色みを強めたいときは0xffe9a0など、白に寄せたいときは0xfff8d8など)
 const NOTE_SIZE_FRACTION = 0.035;               // 音符の大きさ。着地点での「画面の高さ」に対する比率(仮値)
 const NOTE_END_DISTANCE_RATIO = 0.35;           // カメラ→銀河の距離のうち、カメラ側のこの位置まで来て消える(0=カメラの目の前、1=銀河)
 const NOTE_DOT_SIZE_RATIO = 0.22;               // 飛び立つ直後の光の点の大きさ = 音符の大きさ × この比率(銀河の星くらい)
@@ -112,7 +116,7 @@ function saveSteps(steps) {
 
 // 1クリックが育ちに与えるステップ数(クリックの合計→ステップ数の換算)。
 function stepsPerClick() {
-  return 1 / (GROWTH_API_URL ? CLICKS_TO_COMPLETE / GALAXY_GROWTH_MAX_STEPS : LOCAL_PREVIEW_CLICKS_PER_STEP);
+  return GALAXY_GROWTH_MAX_STEPS / CLICKS_TO_COMPLETE; // = 星1個ぶん
 }
 
 function todayUtc() {
@@ -157,20 +161,10 @@ async function callApi(path, method) {
   }
 }
 
-// ── 音符のテクスチャ(文字をCanvasに描いただけ。画像ファイルは不要) ──
-function makeNoteTexture(glyph) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  ctx.font = '96px serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = 'rgba(255, 220, 150, 0.9)';
-  ctx.shadowBlur = 16;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(glyph, 64, 70);
-  const texture = new THREE.CanvasTexture(canvas);
+// ── 音符のテクスチャ(EighthBanana_.pngから作った画像。noteImage.js) ──
+// 画像は白一色+透過なので、実際の色はスプライトのcolor(NOTE_COLOR)で付く。
+function makeNoteTexture() {
+  const texture = new THREE.TextureLoader().load(NOTE_IMAGE_DATA_URL);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -228,7 +222,7 @@ export function createGalaxyGrowth(scene, galaxy, camera) {
     contributing: false,     // クリックしてから、音符が飛び始めるまでの間(サーバーの返事待ち)
     elapsed: 0,
     notes: [],
-    textures: NOTE_GLYPHS.map(makeNoteTexture),
+    textures: [makeNoteTexture()],       // 音符は1種類(画像)
     dotTexture: makeDotTexture(),
     puff: createPuff(galaxy),
     savingCaption: null,
@@ -545,7 +539,9 @@ export function updateGalaxyGrowth(growth, deltaSeconds) {
   if (growth.shownSteps !== growth.targetSteps) {
     const follow = 1 - Math.exp(-STEP_SMOOTHING * deltaSeconds);
     growth.shownSteps += (growth.targetSteps - growth.shownSteps) * follow;
-    if (Math.abs(growth.targetSteps - growth.shownSteps) < 1e-4) growth.shownSteps = growth.targetSteps;
+    // 1クリック=星1個ぶんのステップはとても小さいので、止まる判定も1クリック分の1000分の1を上限にする
+    const snap = Math.min(1e-4, stepsPerClick() * 1e-3);
+    if (Math.abs(growth.targetSteps - growth.shownSteps) < snap) growth.shownSteps = growth.targetSteps;
     setGalaxyGrowth(growth.galaxy, growth.shownSteps);
   }
 }
