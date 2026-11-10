@@ -13,11 +13,11 @@ import {
   startHamiltonianCaption,
   showEquationCompletePhrase,
 } from './captions.js';
-import { createPhase3Assets } from './phase3.js';
+import { createPhase2Assets } from './phase2.js';
 
 // ── 星の収束オーケストレーション ──────────────────────
 export const STAR_CONVERGENCE = {
-  psiFinal: { count: 'all', duration: 59 },
+  psiFinal: { count: 'all', duration: 1 },
 };
 
 // starFieldの未割当プールから星を取り出し、symbolKeyの形へ収束させる。
@@ -175,9 +175,9 @@ export function createEquationAssembly(scene, camera) {
   const completePhraseEl = createCaptionBox({ leftPercent: 50, topPercent: 50 }); // ①完成フレーズ用(位置は表示時に動的に上書きする)
   const completePhraseCaption = makeCaptionController(completePhraseEl);
 
-  const phase3 = createPhase3Assets(scene); // ②③④用の6スプライト(最初は全部非表示)
+  const phase2 = createPhase2Assets(scene); // ②③④用の6スプライト(最初は全部非表示)
 
-  return { sprites, caption, hamCaption, completePhraseCaption, phase3 };
+  return { sprites, caption, hamCaption, completePhraseCaption, phase2 };
 }
 
 // ── 軸を歩く経路(hbar/hamiltonian専用) ──────────────────────
@@ -200,10 +200,10 @@ function buildWalkPaths(frame, depth) {
   };
 }
 
-// ── Phase 1 開始: iクリック(finale.js側でキャプションを消した直後)に呼ぶ ──────
+// ── Phase 1 開始: iクリック(trigger.js側でキャプションを消した直後)に呼ぶ ──────
 //
-// existingISprite: finale.js が返す iSprite(頂点に既にいる緑いi、ワールド座標)。
-// camera: startPhase1の間ずっと静止している前提のカメラ(FINALE_DESTで静止済み)。
+// existingISprite: trigger.js が返す iSprite(頂点に既にいる緑いi、ワールド座標)。
+// camera: startPhase1の間ずっと静止している前提のカメラ(TRIGGER_DESTで静止済み)。
 //   computeScreenFrame()に一度使うだけ(毎フレーム呼ぶ必要はない)。
 // starField: main.js の createStars() が返すオブジェクト。
 // onEquationComplete: ①(iħ∂ψ/∂t=Ĥψ)が完全に出来上がった瞬間に呼ばれる。
