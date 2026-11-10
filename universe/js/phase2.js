@@ -11,7 +11,7 @@ import {
 } from './symbolAssets.js';
 
 // ════════════════════════════════════════════════════════════════
-// ── Phase 3: iħ項の②③④ 差し替え(schrodinger-sequence-timeline.md 参照) ──
+// ── Phase 2: iħ項の②③④ 差し替え(schrodinger-sequence-timeline.md 参照) ──
 // ════════════════════════════════════════════════════════════════
 //
 // ①(iħ、Phase1で完成済み) → ②i(h/2π) → ③i(h/Carousel) → ④(iがhに乗ったもの)/Carousel
