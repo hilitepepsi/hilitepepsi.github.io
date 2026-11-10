@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { TRIPOD_RADIUS } from './universe.js';
-import { SUN_ORBIT_PERIOD } from './solarSystem.js';
+import { TRIPOD_RADIUS } from './auditorium.js';
+import { GALAXY_ROTATION_PERIOD } from './config.js';
 
 // ══════════════════════════════════════════════════════════════
-// ── 「天の川銀河」: 宇宙ページ(universe.js)のtripod直下に浮かぶ巨大な銀河 ──
+// ── 「天の川銀河」: オーディトリアム(auditorium.js)のtripod上に浮かぶ巨大な銀河 ──
 // ══════════════════════════════════════════════════════════════
 //
 // 仕様(ご指示より):
@@ -16,14 +16,14 @@ import { SUN_ORBIT_PERIOD } from './solarSystem.js';
 //   - サイズは「巨大」とのことなので、tripodの回転軌道半径(TRIPOD_RADIUS)を基準に
 //     その数倍の半径を持たせ、tripod・太陽系をまるごと包み込むスケール感にしてある。
 //   - カメラから見えていなくてよいとのことなので、登場は太陽系(solarSystem.js)と
-//     同じ扱い ── 宇宙ページ到達と同時に、フェードや拡大なしでいきなりフルサイズ
+//     同じ扱い ── オーディトリアム到達と同時に、フェードや拡大なしでいきなりフルサイズ
 //     表示する(revealGalaxy)。以後、明示的に操作しない限り常にフルサイズのまま
 //     (銀河そのものの拡大・縮小演出は廃止済み。詳細は末尾のTODO参照)。
 //   - ★ 2026-09-14: 中心の棒状バルジ(バー+コア)は撤去した。「バルジが登場する」
 //     演出はrecord.js側の戴冠シーケンス(バナナ消滅→バルジがフェードイン→針→太陽系召喚)
 //     が本来の担当であり、あちらは意図通り最初は隠れていて、演出のタイミングで初めて
 //     フェードインする。ところがこちらgalaxy.js側にも同じ見た目のバー+コアを銀河本体に
-//     常設で焼き込んでいた(2026-09-13追加分)ため、宇宙ページに着いた瞬間から
+//     常設で焼き込んでいた(2026-09-13追加分)ため、オーディトリアムに着いた瞬間から
 //     revealGalaxyで銀河ごと即座にフル表示されてしまい、「バルジは演出で登場するはず
 //     なのに最初から見えている」という状態になっていた。この銀河本体側の常設バルジを
 //     削除し、円盤(渦巻き)だけの銀河に戻すことで、バルジの「登場」はrecord.js側の
@@ -39,7 +39,7 @@ import { SUN_ORBIT_PERIOD } from './solarSystem.js';
 // main.js側の想定される呼び出し方:
 //   import { createGalaxy, revealGalaxy, updateGalaxy } from './galaxy.js';
 //   const galaxy = createGalaxy(scene, GALAXY_ANCHOR); // createSolarSystemの近くで1回
-//   // enterUniverse()完了時など、宇宙ページに入ったタイミングで(solarSystemと同時):
+//   // enterAuditorium()完了時など、オーディトリアムに入ったタイミングで(solarSystemと同時):
 //   revealGalaxy(galaxy);
 //   // 毎フレームのレンダーループ内:
 //   updateGalaxy(galaxy, deltaSeconds);
@@ -142,7 +142,7 @@ const GALAXY_OUTSIDE_COLOR = new THREE.Color(0x3a6fd8); // 外側の腕。寒色
 
 // ★ バグ修正(ご指摘反映): 「銀河内から見た星が小さすぎる」への対応。頂点シェーダーで
 //   `gl_PointSize *= (1.0 / -viewPosition.z)` という、カメラからの距離に反比例する
-//   減衰をかけている(遠いほど小さく見える、通常の遠近感)。config.jsのUNIVERSE_CAMERA_
+//   減衰をかけている(遠いほど小さく見える、通常の遠近感)。config.jsのAUDITORIUM_CAMERA_
 //   DISTANCEを10倍(1000→10000)にしたため、カメラが銀河から10倍遠くなり、この減衰だけで
 //   星が画面上で約10倍小さく見えるようになっていた。基準サイズ側を10倍にして打ち消す。
 export const GALAXY_POINT_SIZE = 680;      // Pointsの基準サイズ(カメラ距離10倍化を打ち消すため、以前の10倍。仮値。uSizeとして渡す)
@@ -188,11 +188,11 @@ const GALAXY_ARM_BRIGHTEN_STRENGTH = 0.9;  // 強調時、対象の腕の粒を�
 const ROTATION_AXIS_DIR = new THREE.Vector3(0, 1, 0);
 export const ROTATION_DIRECTION = -1;       // 自転の向き(+1/-1)。以前と逆回転にしたいのでマイナスに
 // ご指示「銀河の回転も太陽系と同じ速度にして」の反映: 以前は独自の固定値(2π/3秒=3秒で1周)
-// だったが、solarSystem.jsのSUN_ORBIT_PERIOD(太陽が主軌道を1周する秒数)から直接導出し、
+// だったが、config.jsのGALAXY_ROTATION_PERIOD(銀河が1周する秒数。旧solarSystem.jsのSUN_ORBIT_PERIOD)から直接導出し、
 // 銀河の自転も「太陽系の公転と同じ周期」でぴったり1周するようにした。
 // ★ 2026-09-12 追加: main.js側で「カメラも銀河と同じ速度で回転させたい」との
 //   ご指示があったため、他ファイルから参照できるようexportした(値自体は変更なし)。
-export const ANGULAR_SPEED = (2 * Math.PI) / SUN_ORBIT_PERIOD; // ラジアン/秒
+export const ANGULAR_SPEED = (2 * Math.PI) / GALAXY_ROTATION_PERIOD; // ラジアン/秒
 // ご指示「レコードの針が出現して、太陽が中心に到達するまでのみ、銀河の回転を1秒で半周する
 // 速度にして」の反映。半周(π radian)を1秒でこなす速さ=πラジアン/秒。
 // record.js側がplayNeedleSequenceの開始〜完了の間だけgalaxy.needleSpinActiveをtrueにする。
@@ -215,6 +215,19 @@ const VERTEX_SHADER = /* glsl */ `
   uniform float uCut;                 // 外周から消す境目の半径(銀河ローカル)。これより外側の星は消える。通常は1e6(=無効)。setGalaxyGrowthが設定
   uniform float uCutW;                // 境目のぼかし幅
   uniform float uBoostAmount;         // 内側ブースト粒(aBoost=1)の表示度合い 0〜1
+  // ★ 2026-11-09 追加(ご指示): 水面モード(プレビューの方式)。星を「月の光の道のきらめき」としてだけ見せる。
+  //   uWater=0で無効(従来どおり全部の星が見える)。俯瞰モードに入ったら0へ戻して全ての星を見せる。
+  uniform float uWater;        // 0=通常 1=水面モード
+  uniform float uWaterTime;
+  uniform vec3 uWaterCenter;   // 水面の中心(ワールド)
+  uniform vec3 uWaterRight;    // 場のx軸(カメラの右。ワールドの水平単位ベクトル)
+  uniform vec3 uWaterFwd;      // 場のy軸(カメラから遠ざかる向き)
+  uniform float uWaterScale;   // ワールド長→プレビュー基準長(銀河半径=117.6)への倍率
+  uniform float uWaterGain;    // きらめきの強さ(星の数がプレビューより多いので、1より小さめ)
+  uniform float uWaterSky;     // 空として見せる全ての星の明るさ(1=通常の銀河と同じ)
+  uniform float uWaterTrailRadius; // 冠の軌跡のきらめきの幅(ワールド単位)
+  #define WATER_TRAIL_N 48
+  uniform vec4 uWaterTrail[WATER_TRAIL_N]; // xy=軌跡の点(場の座標) z=強さ(0〜1)
   attribute float aScale;
   attribute float aAlpha;
   attribute float aBaseRadius; // 粒の中心からのXZ半径(bulge側用。銀河本体はシェーダー内で毎回求める)
@@ -263,11 +276,57 @@ const VERTEX_SHADER = /* glsl */ `
       armMorph = uMorph;
     #endif
     vec4 modelPosition = modelMatrix * vec4(pos, 1.0);
+    // ── 水面モード: 星のワールド位置(自転込み)から、プレビューと同じ式できらめき係数を求める ──
+    float waterFactor = 1.0;
+    if (uWater > 0.0) {
+      vec3 wRel = modelPosition.xyz - uWaterCenter;
+      float wFx = dot(wRel, uWaterRight);
+      float wFy = dot(wRel, uWaterFwd);
+      float wX = wFx * uWaterScale;
+      float wY = wFy * uWaterScale;
+      float wRand = fract(sin(dot(position, vec3(12.9898, 78.233, 37.719))) * 43758.5453);          // 星ごとの乱数(明るさ)
+      float wPhase = fract(sin(dot(position, vec3(39.346, 11.135, 83.155))) * 24634.6345) * 6.283;  // 星ごとの位相
+      float wYc = clamp(wY, -26.0, 26.0);
+      float wSg = 2.6 + 0.07 * (wYc + 26.0);
+      // 月の光の道: 画面中央の縦の帯だけ。サイドはほぼ消す(0.1→0.01)。バナナ(月の真下)に近いほど少し強い。
+      float wNear = exp(-(wX * wX + wY * wY) / (40.0 * 40.0)); // バナナへの近さ(0〜1)
+      float wMoon = 1.0 + 2.2 * wNear; // バナナ側ほど強く(以前は+0.9)
+      float wEnv = (0.01 + 0.99 * exp(-wX * wX / (wSg * wSg))) * wMoon;
+      wEnv *= 1.0 - smoothstep(0.0, 8.0, wY); // バナナより奥側(wY>0)の帯は消す
+      float wAw = 0.004 * wRand;
+      if (wEnv > 0.05) {
+        float wP = wPhase * 0.25;
+        float wSl = cos(1.7 * wY + 0.12 * wX - 1.2 * uWaterTime + wP)
+                  + 0.7 * cos(2.9 * wY - 0.2 * wX - 1.9 * uWaterTime + wP * 1.7)
+                  + 0.45 * cos(4.3 * wY + 0.25 * wX - 2.6 * uWaterTime + wP * 2.3)
+                  + 0.5 * cos(0.7 * wX - 1.1 * uWaterTime + wP * 0.6);
+        // 帯の筋の太さ: バナナに近いほど太くして、光る星の数を増やす(0.2→最大0.5)
+        wAw = max(wAw, wEnv * exp(-wSl * wSl / (0.2 + 0.3 * wNear)) * (0.55 + 0.45 * wRand));
+      }
+      // 空: 水面側にいる間は、銀河の星をすべて見せる(星空として機能する)。帯・冠の軌跡のきらめき(wAw)は、これより明るく上に重なる。
+      //   uWaterSkyは「waterFactorとしての明るさ」(1=通常の銀河と同じ明るさ)。uWaterGainで割っているのは、下でwAw*uWaterGainにするため。
+      float wSkyTw = 0.85 + 0.15 * sin(uWaterTime * (1.0 + 2.0 * wRand) + wPhase * 5.0); // ほんのりまたたく
+      wAw = max(wAw, uWaterSky / uWaterGain * (0.3 + 0.7 * wRand * wRand) * wSkyTw);
+      // 冠の軌跡の一時的なきらめき(近い星ほど強く、時間とともに消える)
+      float wHeat = 0.0;
+      for (int wi = 0; wi < WATER_TRAIL_N; wi++) {
+        vec4 wTp = uWaterTrail[wi];
+        if (wTp.z <= 0.0) continue;
+        vec2 wD = vec2(wFx, wFy) - wTp.xy;
+        wHeat = max(wHeat, wTp.z * exp(-dot(wD, wD) / (uWaterTrailRadius * uWaterTrailRadius)));
+      }
+      if (wHeat > 0.01) {
+        float wTw = 0.5 + 0.5 * sin(uWaterTime * 9.0 + wPhase * 3.0 + wRand * 40.0);
+        wAw = max(wAw, wHeat * (0.35 + 0.65 * wTw) * (0.4 + 0.6 * wRand));
+      }
+      waterFactor = mix(1.0, wAw * uWaterGain, uWater);
+    }
     vec4 viewPosition = viewMatrix * modelPosition;
     vec4 projectedPosition = projectionMatrix * viewPosition;
     gl_Position = projectedPosition;
 
     gl_PointSize = uSize * aScale * edgeSize * uPixelRatio;
+    gl_PointSize *= mix(1.0, 1.0 + 0.7 * clamp(waterFactor, 0.0, 1.5), uWater); // 水面モード: 光っている粒ほど大きく
     gl_PointSize *= (uZoom / -viewPosition.z); // uZoomは通常1。俯瞰のズーム時だけmain.jsが上げる(星が実寸のまま拡大される)
 
     // 中心の穴: 半径uHoleRadiusより内側の粒は消え、ふちはuHoleFadeの幅でなめらかに現れる。
@@ -296,7 +355,7 @@ const VERTEX_SHADER = /* glsl */ `
     // 銀河本体側は常に十分遠いので、uNearFadeStart=0/uNearFadeRange=1(実質無効)で呼べばよい。
     float viewDist = -viewPosition.z;
     float nearFade = smoothstep(uNearFadeStart, uNearFadeStart + max(uNearFadeRange, 0.0001), viewDist);
-    vAlpha = baseAlpha * nearFade * holeFade * boostFade;
+    vAlpha = baseAlpha * nearFade * holeFade * boostFade * waterFactor;
   }
 `;
 
@@ -314,15 +373,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-// ★ 2026-09-19 追加(ご指摘反映): 「ガラス(トーンアーム)に星が透過しない」への対応。
-//   three.jsのtransmissionは、その時点までに描画済みの「不透明(opaque)」なジオメトリ
-//   だけを背景としてキャプチャする。銀河の粒はAdditiveBlending+transparent:trueな
-//   ソフトな光でできているため、透過パスより後(半透明パス)で描かれてしまい、
-//   ガラス越しには一切映らない。そこで、同じ位置・色を使った「不透明な核」だけの
-//   レイヤーをもう1枚(下記FRAGMENT_SHADER_OPAQUE + createGalaxyOpaqueMaterial)追加し、
-//   従来のソフトな輝きレイヤーの下に重ねて描く。核レイヤーはtransparent:false/
-//   depthWrite:trueの完全な不透明ジオメトリなので、これがtransmissionに正しく
-//   キャプチャされ、ガラス越しに星が見えるようになる。
+// トーンアーム（ガラス）越しに星が見えるようになる。
 const FRAGMENT_SHADER_OPAQUE = /* glsl */ `
   varying vec3 vColor;
   varying float vAlpha;
@@ -677,6 +728,49 @@ export function setGalaxyBrightness(galaxy, value) {
 //     落ちて消える。銀河のように常に十分遠い場合は0のままでよい(実質無効)。
 //   - maxPixelSize: 画面上の見かけサイズの上限(px)。0で無効。
 //   - brightness: 色に掛ける明るさ(uBrightness)。1=そのまま。銀河とバルジで別々に渡す。
+// ── 水面モード(2026-11-09 追加): 輝きレイヤーと不透明レイヤー(と、バナナ側のマテリアル)で共有するuniform ──
+//   軌跡の配列(WATER_TRAIL)は全マテリアルで同じ配列を参照するので、1か所を書き換えれば全部に効く。
+//   uWater=0(既定)なら何も変わらない。
+export const GALAXY_WATER_TRAIL_COUNT = 48;
+const WATER_TRAIL = Array.from({ length: GALAXY_WATER_TRAIL_COUNT }, () => new THREE.Vector4());
+const WATER_PREVIEW_RADIUS = 117.6; // プレビューで式を作ったときの銀河半径(この基準に合わせてワールド長を縮尺する)
+function waterUniforms() {
+  return {
+    uWater: { value: 0 },
+    uWaterTime: { value: 0 },
+    uWaterCenter: { value: new THREE.Vector3() },
+    uWaterRight: { value: new THREE.Vector3(1, 0, 0) },
+    uWaterFwd: { value: new THREE.Vector3(0, 0, 1) },
+    uWaterScale: { value: WATER_PREVIEW_RADIUS / GALAXY_RADIUS },
+    uWaterGain: { value: 2.4 }, // 帯を明るく(以前は1)
+    uWaterSky: { value: 0.6 },  // 空(全ての星)の明るさ。帯のきらめき(gain 2.4)より暗く、星空として見える程度(仮値)
+    uWaterTrailRadius: { value: 90 },
+    uWaterTrail: { value: WATER_TRAIL },
+  };
+}
+// 水面の座標系を設定する(オーディトリアム突入時に1回)。基底はfairyTale.jsのgetBasis()の値。
+export function configureGalaxyWater(galaxy, { center, right, fwd, gain, trailRadius, sky }) {
+  if (!galaxy) return;
+  [galaxy.material, galaxy.opaqueMaterial].forEach((m) => {
+    if (!m || !m.uniforms.uWater) return;
+    m.uniforms.uWaterCenter.value.copy(center);
+    m.uniforms.uWaterRight.value.copy(right);
+    m.uniforms.uWaterFwd.value.copy(fwd);
+    if (gain !== undefined) m.uniforms.uWaterGain.value = gain;
+    if (sky !== undefined) m.uniforms.uWaterSky.value = sky;
+    if (trailRadius !== undefined) m.uniforms.uWaterTrailRadius.value = trailRadius;
+  });
+}
+// 水面モードの度合い(0=通常で全部の星が見える / 1=水面)。俯瞰モード突入で0へ戻す。
+export function setGalaxyWater(galaxy, amount) {
+  if (!galaxy) return;
+  [galaxy.material, galaxy.opaqueMaterial].forEach((m) => {
+    if (m && m.uniforms.uWater) m.uniforms.uWater.value = amount;
+  });
+}
+// 冠の軌跡の書き込み先(Vector4配列)。fairyTale.sampleTrail(getGalaxyWaterTrail())で毎フレーム埋める。
+export function getGalaxyWaterTrail() { return WATER_TRAIL; }
+
 export function createStarPointsMaterial({
   size,
   nearFadeStart = 0,
@@ -717,6 +811,7 @@ export function createStarPointsMaterial({
       uCut: { value: 1e6 },
       uCutW: { value: 1 },
       uBoostAmount: { value: 0 },
+      ...waterUniforms(),
       ...(enableDiffRotation ? {
         uDiffActive: { value: 0 },
         uDiffElapsed: { value: 0 },
@@ -774,6 +869,7 @@ export function createGalaxyOpaqueMaterial({
       uCut: { value: 1e6 },
       uCutW: { value: 1 },
       uBoostAmount: { value: 0 },
+      ...waterUniforms(),
       ...(enableDiffRotation ? {
         uDiffActive: { value: 0 },
         uDiffElapsed: { value: 0 },
@@ -805,7 +901,7 @@ function buildGalaxyOpaqueMaterial() {
   });
 }
 
-// scene: universe.js/solarSystem.jsと同じシーンに追加する想定。
+// scene: auditorium.js/solarSystem.jsと同じシーンに追加する想定。
 // anchor: 銀河の中心にするワールド座標。main.js側でrecord.jsのバナナが最終的に着地する
 //         座標から計算したもの(GALAXY_ANCHOR)を渡す想定。
 export function createGalaxy(scene, anchor) {
@@ -849,6 +945,7 @@ export function createGalaxy(scene, anchor) {
     //   ジャンプ)とは別に、通常速度に対する「掛け算の倍率」だけを持たせておき、
     //   setGalaxySpinBoost()で自由な値に変えられるようにした。
     spinBoost: 1,
+    rotationHeld: false, // ★ 2026-11-09: trueの間は自転しない(戴冠するまで止めておく)。setGalaxyRotationHeldで切り替える
     // ★ 修正: 銀河俯瞰時、アームを置くまでの間だけ「中心に近いほど角速度を速く」する
     //   差動回転を有効にするためのフラグ。角度計算自体はGPU側(VERTEX_SHADER)でやるので、
     //   CPU側で持つのは経過秒数1個(diffElapsed)だけでよい(以前は粒子ごとの累積回転角を
@@ -858,7 +955,7 @@ export function createGalaxy(scene, anchor) {
   };
 }
 
-// ── 宇宙ページ到達と同時に呼ぶ: solarSystem.group.visible = true と同じ扱いで、
+// ── オーディトリアム到達と同時に呼ぶ: solarSystem.group.visible = true と同じ扱いで、
 //    フェードや拡大演出なしにいきなりフルサイズで表示する ──────────────
 export function revealGalaxy(galaxy) {
   if (!galaxy || galaxy.state !== 'hidden') return;
@@ -869,6 +966,8 @@ export function revealGalaxy(galaxy) {
 // ── 毎フレーム呼ぶ: 銀河をworld Yまわりに自転させる(state==='idle'の間) ──
 export function updateGalaxy(galaxy, deltaSeconds) {
   if (!galaxy || galaxy.state === 'hidden') return;
+  galaxy.waterTime = (galaxy.waterTime || 0) + deltaSeconds; // 水面モードのきらめきの時間(自転とは独立)
+  [galaxy.material, galaxy.opaqueMaterial].forEach((m) => { if (m && m.uniforms.uWaterTime) m.uniforms.uWaterTime.value = galaxy.waterTime; });
   if (galaxy.diffRotationActive) {
     // ★ バグ修正(ご指摘反映: 粒子を増やすとCPUループが重くなる問題への対応)。
     //   以前はここで毎フレーム全粒子分のCPUループ(updateGalaxyDifferentialRotation)を
@@ -881,6 +980,7 @@ export function updateGalaxy(galaxy, deltaSeconds) {
     if (galaxy.opaqueMaterial?.uniforms.uDiffElapsed) galaxy.opaqueMaterial.uniforms.uDiffElapsed.value = galaxy.diffElapsed;
     return; // この間は通常の剛体回転(starsGroup全体を一括rotate)はかけない
   }
+  if (galaxy.rotationHeld) return; // 戴冠前は止める(水面のきらめきの時間だけは上で進めている)
   const magnitude = galaxy.needleSpinActive ? NEEDLE_SPIN_MAGNITUDE : ANGULAR_SPEED * (galaxy.spinBoost ?? 1);
   galaxy.starsGroup.rotateOnWorldAxis(ROTATION_AXIS_DIR, ROTATION_DIRECTION * magnitude * deltaSeconds);
 }
@@ -921,15 +1021,18 @@ export function setGalaxyDifferentialRotation(galaxy, active) {
 
 // トーンアーム(record.js側)が針を置いたときなど、銀河の自転速度を通常のANGULAR_SPEEDに
 // 対する倍率で一時的に変えたいときに呼ぶ。multiplier=1が通常速度。
+// 銀河の自転を止める/再開する。戴冠までは止め(true)、戴冠した瞬間に再開(false)する。
+export function setGalaxyRotationHeld(galaxy, held) {
+  if (!galaxy) return;
+  galaxy.rotationHeld = !!held;
+}
+
 export function setGalaxySpinBoost(galaxy, multiplier) {
   if (!galaxy) return;
   galaxy.spinBoost = multiplier;
 }
 
 // TODO:
-//   - GALAXY_RADIUS(=TRIPOD_RADIUS*8)を含む形状パラメータ(GALAXY_PARTICLE_COUNT /
-//     GALAXY_BRANCHES / GALAXY_SPIN / GALAXY_RANDOMNESS(_POWER) / GALAXY_FLATTEN /
-//     GALAXY_POINT_SIZE)は全て仮値です。実際に見ながら調整してください。
 //   - GALAXY_INSIDE_COLOR / GALAXY_OUTSIDE_COLOR も仮値(暖色→寒色のグラデーション)。
 //   - ANGULAR_SPEED / ROTATION_DIRECTION / NEEDLE_SPIN_MAGNITUDEも仮値。ROTATION_DIRECTIONは
 //     +1/-1で自転の向きを切り替えられます(GALAXY_SPINの符号と合わせて渦の見え方が決まります)。
