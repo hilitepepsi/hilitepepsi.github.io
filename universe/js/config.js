@@ -17,8 +17,8 @@ export const AXIS_WORLD_DIR = {
 // ══════════════════════════════════════════════════════════════
 // ── ホーム(main.jsのイントロ・record.jsの鏡演出)用のカメラ ──────────
 //   ★ この3つ(DISTANCE/TARGET/POS)は他ページと共有されているため、
-//   ここより下は絶対に変更しないこと。宇宙ページだけ視点を変えたい場合は、
-//   このすぐ下にある「universe.js専用のカメラ視点」ブロックの方を編集する。
+//   ここより下は絶対に変更しないこと。オーディトリアムだけ視点を変えたい場合は、
+//   このすぐ下にある「auditorium.js専用のカメラ視点」ブロックの方を編集する。
 // ══════════════════════════════════════════════════════════════
 export const HOME_CAMERA_DISTANCE = 34;
 export const HOME_CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
@@ -27,21 +27,21 @@ export const HOME_CAMERA_POS = new THREE.Vector3(1, 1, 1)
   .multiplyScalar(HOME_CAMERA_DISTANCE);
 
 // ══════════════════════════════════════════════════════════════
-// ── universe.js専用のカメラ視点(上のHOME_CAMERA_*とは完全に独立) ───────
+// ── auditorium.js専用のカメラ視点(上のHOME_CAMERA_*とは完全に独立) ───────
 //   2026-09-11: phase2(数式ズーム→②③④展開後)で静止しているカメラの実際の
 //   position/targetを、main.js側のdumpCamera()デバッグ関数でその場でキャプチャして
 //   固定値化した(採取値をきれいな数値に丸めてある)。以前あった「距離46・方向比率
 //   (1,0.3,1)」という計算式ベースの推測値は、実際の画角とは大きくズレていたため
 //   (position差で約51ユニット)、このキャプチャ値に置き換えている。
 //   HOME_CAMERA_POS/TARGET/DISTANCEはmain.js(イントロ)・record.js(鏡演出)でも
-//   参照されているため、宇宙ページ用にここを直接書き換えると他ページに被害が出る。
-//   そのためここで独立した定数として新設している。宇宙ページの視点を調整したい
+//   参照されているため、オーディトリアム用にここを直接書き換えると他ページに被害が出る。
+//   そのためここで独立した定数として新設している。オーディトリアムの視点を調整したい
 //   ときはこのブロックだけを触ればよい。
 //
 //   ★ 2026-09-11 再調整(ご指示反映): 上記の経緯の通り、このPOSはもともとPhase2
 //   (数式ズームの間近の距離感)からそのまま流用した値だったため、tripod
 //   (半径TRIPOD_RADIUS≈14.7・高さAPEX_HEIGHT≈10.4)や銀河(半径GALAXY_RADIUS≈118。
-//   galaxy.js参照)を含む宇宙ページの実際のスケール感には近すぎた(原点からの距離が
+//   galaxy.js参照)を含むオーディトリアムの実際のスケール感には近すぎた(原点からの距離が
 //   約5.7しかなく、tripodの脚が描く円の内側にほぼ埋まっていた)。
 //   「カメラを離して、余裕を持ってtripod/リングを小さく配置したい」「視点をもっと
 //   水平に近くしたい」というご指示を反映し、
@@ -51,12 +51,12 @@ export const HOME_CAMERA_POS = new THREE.Vector3(1, 1, 1)
 //       極角(OrbitControlsのphi)が90°(=真横から見た「水平」)に近づくようにした。
 //   ★ 2026-09-11 さらに再調整(ご指示反映): 「まだcarouselに近すぎる」とのことで、
 //   TARGETからの距離を約37→約85(倍以上)に拡大した(方向・水平寄りの角度比率は維持)。
-//   宇宙ページはcontrols.enableZoom=false(main.js参照)で入場時の距離が固定される
+//   オーディトリアムはcontrols.enableZoom=false(main.js参照)で入場時の距離が固定される
 //   ため、この距離感がそのままずっと保たれる。仮値なので、見ながら調整してください。
 // ══════════════════════════════════════════════════════════════
-export const UNIVERSE_CAMERA_TARGET = new THREE.Vector3(0, 1, 0);
+export const AUDITORIUM_CAMERA_TARGET = new THREE.Vector3(0, 1, 0);
 
-// ★ 2026-09-12 変更: 「方向」と「距離」を分離した。以前はUNIVERSE_CAMERA_POSに
+// ★ 2026-09-12 変更: 「方向」と「距離」を分離した。以前はAUDITORIUM_CAMERA_POSに
 //   生のワールド座標(60,12,60)を直接ハードコードしていて、距離を変えたいだけでも
 //   3成分すべてを計算し直す必要があった(単位ベクトルではないので、値をそのまま
 //   スケールしても意図した距離にならない)。
@@ -64,24 +64,24 @@ export const UNIVERSE_CAMERA_TARGET = new THREE.Vector3(0, 1, 0);
 //   一本で決まる(狭いfovでは「距離が近い=拡大、遠い=縮小」がほぼそのまま効く)。
 //   DIRは「どの角度から見るか」だけを担当し、正規化してあるので長さ(スケール)は
 //   気にしなくてよい。
-export const UNIVERSE_CAMERA_DIR = new THREE.Vector3(160, 8, 160).normalize(); // 以前のPOSと同じ向きを維持
+export const AUDITORIUM_CAMERA_DIR = new THREE.Vector3(160, 8, 160).normalize(); // 以前のPOSと同じ向きを維持
 // ★ 修正(ご指示反映): 「銀河を10倍にしたので、カメラ位置も10倍遠ざけたい」への対応。
 //   fov(角度)は世界のスケールと無関係なので変える必要はないが、距離は世界座標の
 //   長さそのものなので、銀河(galaxy.js側のGALAXY_RADIUS)と同じ比率で大きくしないと
 //   カメラが相対的に銀河へ近づきすぎる(=銀河の内側に埋まって見える)。
-export const UNIVERSE_CAMERA_DISTANCE = 10000; // ズーム量はこの数字だけで調整する。小さいほど拡大される(以前の10倍)
-export const UNIVERSE_CAMERA_POS = UNIVERSE_CAMERA_TARGET.clone().add(
-  UNIVERSE_CAMERA_DIR.clone().multiplyScalar(UNIVERSE_CAMERA_DISTANCE)
+export const AUDITORIUM_CAMERA_DISTANCE = 10000; // ズーム量はこの数字だけで調整する。小さいほど拡大される(以前の10倍)
+export const AUDITORIUM_CAMERA_POS = AUDITORIUM_CAMERA_TARGET.clone().add(
+  AUDITORIUM_CAMERA_DIR.clone().multiplyScalar(AUDITORIUM_CAMERA_DISTANCE)
 );
 
-// ── tripod/リングの入れ替えフェーズの区切り(tripodRingSwap.js側で使用) ──
-//   record.viewMixCurrent(0〜1)のうち、0〜PHASE_SWAP_ENDの区間が「tripod降下+リング上昇+
-//   鏡tripodへの入れ替え」の区間、PHASE_SWAP_END〜1がそれ以降(スクロールし切った後の
-//   余白)になる。以前はrecord.js側のカメラ振り向き処理もこの区切りを参照していたが、
-//   カメラを完全固定する方針に変更した際にその処理自体を撤去したため、現在参照している
-//   のはtripodRingSwap.jsのみ。config.js側に定数化してあるのは、将来またカメラ側の
-//   処理が復活したときに2箇所で値がズレるバグを防ぐため(仮値。見た目を見ながら調整してください)。
-export const PHASE_SWAP_END = 0.5;
+// ══════════════════════════════════════════════════════════════
+// ── 銀河まわりの基準値(旧solarSystem.jsにあった値をここへ移した) ──────────
+//   solarSystem.jsは廃止したが、次の2つだけは銀河(galaxy.js)・バルジ(record.js)の寸法の基準として生き残っている。
+//   ★★ 要記入: 旧solarSystem.jsのSUN_ORBIT_PERIOD / ORBIT_RADIUS_BASEの値を、下の2つへそのまま写してください。
+//      (下の数値は仮の置き場所の値で、元の見た目とは一致しない可能性があります)
+// ══════════════════════════════════════════════════════════════
+export const GALAXY_ROTATION_PERIOD = 60;  // 銀河が1周する秒数(旧SUN_ORBIT_PERIOD)。galaxy.jsのANGULAR_SPEEDとtripodの自転速度がこれで決まる
+export const BULGE_REFERENCE_RADIUS = 30;  // バルジの大きさ・近接フェードの基準半径(旧ORBIT_RADIUS_BASE)。record.jsで使う
 
 // ══════════════════════════════════════════════════════════════
 // ── 星空の外殻と、カメラの「見えない壁+重力」(trigger以前のホーム用) ──────
