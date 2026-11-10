@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { HOME_CAMERA_POS, HOME_CAMERA_TARGET, AXIS_LENGTH, UNIVERSE_CAMERA_POS, UNIVERSE_CAMERA_TARGET } from './config.js';
-import { TRIPOD_ANGULAR_SPEED, RECORD_ANCHOR, TRIPOD_GROUND_Y } from './universe.js';
-import { ORBIT_RADIUS_BASE, startSolarSystem } from './solarSystem.js';
+import { HOME_CAMERA_POS, HOME_CAMERA_TARGET, AXIS_LENGTH, AUDITORIUM_CAMERA_POS, AUDITORIUM_CAMERA_TARGET, BULGE_REFERENCE_RADIUS } from './config.js';
+import { TRIPOD_ANGULAR_SPEED, RECORD_ANCHOR, TRIPOD_GROUND_Y } from './auditorium.js';
 import { GALAXY_RADIUS, GALAXY_POINT_SIZE, setGalaxyHole, createStarPointsMaterial, setGalaxySpinBoost, setGalaxyDifferentialRotation } from './galaxy.js';
 import { createCaptionBox, makeCaptionController, getSourceCaption } from './captions.js';
 import { createGalaxyGrowth, refreshGalaxyGrowth, playGalaxyContribution, updateGalaxyGrowth } from './galaxyGrowth.js';
@@ -12,42 +11,25 @@ import { createTrumpetToMetaphony } from './trumpet.js';
 // ── 「レコードプレーヤー(操作パネル)」演出 ───────────────────
 // ══════════════════════════════════════════════════════════════
 //
-// 仕様(ご指示より):
-//   1) カメラの背後に、鏡素材の三角錐(頂点の高さ・底面の外接円半径は既存tripod=universe.jsの
+//   1) カメラの背後に、鏡素材の三角錐(頂点の高さ・底面の外接円半径は既存tripod=auditorium.jsの
 //      ものと同じ式を流用。底面は正三角形)を置く。頂点にバナナを乗せる。カメラの位置は常に
 //      固定(pan/zoom無効。回転=見回すことだけできる)。
 //   2) スクロールでtripod/リング/鏡tripodの入れ替え演出を進める(下スクロール=鏡側へ、
 //      上スクロール=元に戻る)。
 //      ★ 2026-09-11時点の実装: カメラのposition・向き(OrbitControlsのtarget)は、この演出
-//      が続く間ずっと一切動かさない(UNIVERSE_CAMERA_TARGET/POSに固定したまま)。以前は
-//      controls.targetをスクロール量に応じてUNIVERSE_CAMERA_TARGET⇔鏡(mirrorLookTarget)
+//      が続く間ずっと一切動かさない(AUDITORIUM_CAMERA_TARGET/POSに固定したまま)。以前は
+//      controls.targetをスクロール量に応じてAUDITORIUM_CAMERA_TARGET⇔鏡(mirrorLookTarget)
 //      の間で補間していたが、それが原因で入れ替え完了後もカメラが動き続け、背景の銀河まで
-//      一緒に動いてしまうバグがあった。見た目の変化は、カメラ側ではなくtripodRingSwap.js側で
+//      一緒に動いてしまうバグがあった。見た目の変化は、カメラ側ではなく旧tripodRingSwap(廃止済み)側で
 //      tripod・リング・鏡tripod自体の位置を動かすことだけで表現する。
-//   3) 鏡三角錐は、carousel側のtripod(universe.js)と「回転周期・位置を共有」する。
+//   3) 鏡三角錐は、carousel側のtripod(auditorium.js)と「回転周期・位置を共有」する。
 //   4) 鏡クリック → 別ページ(prism.html)へ遷移。
-//
-// ★ 2026-09-11時点の設計変更(ご指示より):
-//   銀河は「先に巨大に表示させておき、右ドラッグで俯瞰後、スクロールで縮小させる」という
-//   新しい流れに変わったため、以前あった
-//     5) バナナクリックで銀河出現をスクロールで操作できるようにする(galaxy-scrub)
-//     6) 銀河クリックで針が出現し、中心へ向かう
-//     7) 針が規定位置に到達したら太陽系(solarSystem)を召喚する
-//   の3つはこのファイルの責務ではなくなった。5)は「それ以外の銀河の動き」として削除。
-//   6)7)については、その後いったん(針+太陽軌道・太陽系軌道の召喚として)実装したが、
-//   針(トーンアーム)の形・位置・動きがすべて不自然だったため2026-09-17に針自体を
-//   全削除した。7)の「太陽系召喚」部分だけはrevealSolarSystem()として残してあり、
-//   今後新しく作り直すトーンアームが盤面に接触したタイミングで呼び出す想定。
-//   右ドラッグ→俯瞰→スクロールでの銀河縮小そのものは別途(main.js側などで)実装される想定。
-//
-// TRIPOD_*まわりの数値(角度・長さ)はuniverse.jsのものをそのままコピーしている
-// (「コピーでよい」とのご指示のため。値を変える場合は両方直す必要がある点に注意)。
 
-// ── 鏡の三角錐(頂点位置の式のみ、コピー元: universe.js) ──────────
+// ── 鏡の三角錐(頂点位置の式のみ、コピー元: auditorium.js) ──────────
 const TRIPOD_ANGLE_FROM_VERTICAL_DEG = 54.7356;
 const TRIPOD_ANGLE_FROM_VERTICAL = THREE.MathUtils.degToRad(TRIPOD_ANGLE_FROM_VERTICAL_DEG);
 const MIRROR_TRIPOD_RADIUS = AXIS_LENGTH * Math.sin(TRIPOD_ANGLE_FROM_VERTICAL); // 底面(正三角形)の外接円半径(=既存tripodの終端3点と同じ式)
-export const MIRROR_APEX_HEIGHT = AXIS_LENGTH * Math.cos(TRIPOD_ANGLE_FROM_VERTICAL); // 頂点の高さ(=既存tripodと同じ式。tripodRingSwap.js側がring Bの高さ計算に使うためexport)
+export const MIRROR_APEX_HEIGHT = AXIS_LENGTH * Math.cos(TRIPOD_ANGLE_FROM_VERTICAL); // 頂点の高さ(=既存tripodと同じ式)
 const MIRROR_ENV_RESOLUTION = 256;                     // キューブカメラの解像度(仮値。重ければ下げる)
 // cubeCameraをmirrorVisualAnchor.positionからどれだけ上にオフセットして置くか(=ピラミッドの
 // だいたい中間の高さに撮影点を置くため。仮値)。createRecordDisplay内での初期配置と、
@@ -66,18 +48,18 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const BANANA_RADIUS = 1.5;
 const BANANA_HIT_RADIUS = 10.6;
 // ★ 2026-10-11 修正(ご指摘反映): 「バナナ(と、バナナと同じ高さに出るリング)が数式より高い」への対応。
-//   以前は独立した仮値(AXIS_LENGTH*0.4)で、数式の高さ(universe.jsのEQUATION_HEIGHT_ABOVE_APEX=
+//   以前は独立した仮値(AXIS_LENGTH*0.4)で、数式の高さ(auditorium.jsのEQUATION_HEIGHT_ABOVE_APEX=
 //   AXIS_LENGTH*0.15)より0.25*AXIS_LENGTHぶん高かった。鏡tripodはカルーセルのtripodと頂点が
 //   対応して動く(鏡tripodの足元=TRIPOD_GROUND_Yまで降りてくる)ので、バナナを数式と同じ
 //   ワールド高さ(RECORD_ANCHOR.y)に置くには「頂点からの高さ」を数式と同じにすればよい。
 //   別の仮値を持たず、RECORD_ANCHORから導出しているので、数式の高さを変えれば自動で追従する。
-//   tripodRingSwap.js側のリングの高さも、この値(export)から決まる想定。
+//   旧tripodRingSwap(廃止済み)側のリングの高さも、この値(export)から決まる想定。
 export const BANANA_HEIGHT_ABOVE_APEX = RECORD_ANCHOR.y - TRIPOD_GROUND_Y - MIRROR_APEX_HEIGHT;
 
 // ══════════════════════════════════════════════════════════════
 // ▼▼▼ バナナクリック演出: ①戴冠 → ②バルジ出現 → ③太陽系(8惑星)出現 ▼▼▼
 //     (トーンアーム自体は撤去済み。今後新しく作り直し、盤面接触タイミングで
-//      revealSolarSystem()を呼ぶ形に差し替える想定)
+//      finishCoronationSequence()を呼ぶ形に差し替える想定)
 // ══════════════════════════════════════════════════════════════
 
 // ── GLBローダー(banana.glb / crown.glb は record.js と同じ階層のdata/配下に置く想定) ──
@@ -88,7 +70,7 @@ export const BANANA_HEIGHT_ABOVE_APEX = RECORD_ANCHOR.y - TRIPOD_GROUND_Y - MIRR
 //   なってしまうため、index.htmlと同じ階層に置いたファイルしか見つからない、という
 //   問題が起きる(実際に報告があった不具合の原因)。
 const BANANA_GLB_PATH = new URL('../assets/obj/goldbanana.glb', import.meta.url).href;
-const CROWN_GLB_PATH = new URL('/assets/obj/crown.glb', import.meta.url).href;
+const CROWN_GLB_PATH = new URL('../assets/obj/crown.glb', import.meta.url).href;
 const gltfLoader = new GLTFLoader();
 
 function loadGLTFScene(path) {
@@ -134,6 +116,8 @@ function getCoronationCaption() {
 //    ずっと表示され続ける(mirrorVisualAnchorの可視状態に一切連動しない)ように
 //    変更した。バー/コアの各比率(HALF_WIDTH/HEIGHT比・CONCENTRATION_POWER等)は
 //    プレビューと同じ値をそのまま踏襲している。 ──
+// 戴冠後の穴の大きさの倍率(以前の2倍)。バルジの大きさ(穴に合わせる)と粒サイズの倍率にも使う。
+const GALAXY_HOLE_SCALE = 2;
 const BULGE_REVEAL_FADE_DURATION = 3.0;   // ②バナナ消滅+バルジ出現にかける秒数(ご指示通り3秒)
 // ★ 2026-09-17 変更(ご指示反映): 「バルジの登場は、バナナの縮小と合わせて、拡大させながら
 //   登場にして」への対応。以前はBANANA_TO_BULGE_GAPだけ待ってから、opacityだけを
@@ -147,7 +131,7 @@ const BULGE_REVEAL_START_SCALE = 0; // 仮値。0=完全に無から拡大して
 const BANANA_VANISH_DURATION = 0.6; // 仮値(秒)。回転・縮小にかける時間
 const BANANA_VANISH_SPINS = 2;      // 仮値。消えるまでに何回転させるか
 const BANANA_VANISH_EASE = 'power1.in'; // 仮値。だんだん加速しながら消える感じ
-const BULGE_BAR_HALF_LENGTH = ORBIT_RADIUS_BASE / 2; // ご指定「太陽系軌道の半分ほど」の直接反映
+const BULGE_BAR_HALF_LENGTH = BULGE_REFERENCE_RADIUS / 2; // ご指定「太陽系軌道の半分ほど」の直接反映
 const BULGE_BAR_HALF_WIDTH  = BULGE_BAR_HALF_LENGTH * 0.32;
 const BULGE_BAR_HALF_HEIGHT = BULGE_BAR_HALF_LENGTH * 0.22;
 const BULGE_BAR_TILT = THREE.MathUtils.degToRad(25); // 仮値(galaxy.js側のBAR_TILT_DEGと同じ角度)
@@ -189,8 +173,10 @@ const BULGE_PARTICLE_COUNT = 6000;          // 900→6000(仮値。粒を小さ�
 //   1.0なら銀河の粒と同じ大きさ。バーとコアを別々に調整できる。
 const BULGE_BAR_SIZE_RATIO = 1.0;   // バーの粒サイズ = GALAXY_POINT_SIZE × この比率(仮値)
 const BULGE_CORE_SIZE_RATIO = 0.8;  // コアの粒サイズ(バーより少し小さく、密集させて光の塊に見せる。仮値)
-const BULGE_BAR_POINT_SIZE = GALAXY_POINT_SIZE * BULGE_BAR_SIZE_RATIO;
-const BULGE_CORE_POINT_SIZE = GALAXY_POINT_SIZE * BULGE_CORE_SIZE_RATIO;
+// バルジをGALAXY_HOLE_SCALE倍に大きくした分、粒も同じ倍率で大きくする(粒サイズはシェーダー側で決まり、バルジのscaleでは変わらないため)。
+const BULGE_PARTICLE_SIZE_MUL = GALAXY_HOLE_SCALE;
+const BULGE_BAR_POINT_SIZE = GALAXY_POINT_SIZE * BULGE_BAR_SIZE_RATIO * BULGE_PARTICLE_SIZE_MUL;
+const BULGE_CORE_POINT_SIZE = GALAXY_POINT_SIZE * BULGE_CORE_SIZE_RATIO * BULGE_PARTICLE_SIZE_MUL;
 // ★ バルジの明るさ(色に掛ける倍率。1=そのまま、小さいほど暗い)。銀河側の明るさ
 //   (galaxy.jsのGALAXY_BRIGHTNESS)とは独立した値で、バルジだけを単独で調整できる。
 //   銀河を暗くしたぶん、初期値は同じ0.6にそろえてある(仮値)。実行中に変えたいときは
@@ -204,10 +190,10 @@ const BULGE_EDGE_SHRINK = 0.55;
 // 保険としてクランプする(仮値。frontend次第でuPixelRatio込みなのでpx基準)。
 const BULGE_MAX_PIXEL_SIZE = 48;
 // この距離(ワールド単位)より近づくと、粒のアルファがフェードして消え始める。
-// ORBIT_RADIUS_BASE(太陽系軌道の基準半径)基準にしておくと、太陽系が周回で
+// BULGE_REFERENCE_RADIUS(太陽系軌道の基準半径)基準にしておくと、太陽系が周回で
 // 接近する距離感と自然に対応する(仮値)。
-const BULGE_NEAR_FADE_START = ORBIT_RADIUS_BASE * 0.15;
-const BULGE_NEAR_FADE_RANGE = ORBIT_RADIUS_BASE * 0.35;
+const BULGE_NEAR_FADE_START = BULGE_REFERENCE_RADIUS * 0.15;
+const BULGE_NEAR_FADE_RANGE = BULGE_REFERENCE_RADIUS * 0.35;
 // バー/コアそれぞれの外縁を、galaxy.js側と同じ考え方でソフトにフェードさせる比率
 // (中心からの相対半径[0,1]のうち、このぶんの幅を1→0へかける。仮値)。
 const BULGE_EDGE_FADE = 0.35;
@@ -226,7 +212,7 @@ const BULGE_EDGE_SOFTEN = false;
 //   バルジと腕の間に大きな空白のリングができていた。ワールドでの見た目がバーの半長×比率に
 //   なるよう、GALAXY_OVERVIEW_SCALEで割った値を使う。
 const GALAXY_HOLE_RADIUS_RATIO = 0.9; // 仮値。バーの先端(=1.0)のすぐ内側から腕が生えて見える大きさ
-const GALAXY_HOLE_RADIUS = BULGE_BAR_HALF_LENGTH * GALAXY_HOLE_RADIUS_RATIO / GALAXY_OVERVIEW_SCALE;
+const GALAXY_HOLE_RADIUS = BULGE_BAR_HALF_LENGTH * GALAXY_HOLE_RADIUS_RATIO * GALAXY_HOLE_SCALE / GALAXY_OVERVIEW_SCALE;
 // ★ 2026-09-28 追加(ご指示反映): 「バナナのように回転させて登場。ただしバナナと逆の加速度で」。
 //   バナナの消滅は BANANA_VANISH_EASE='power1.in'(だんだん加速)で回りながら縮むので、
 //   バルジは逆に、最初が最速で、だんだん減速して止まる('power1.out')回転で現れる。
@@ -447,38 +433,19 @@ function hitsClickStar(record, raycaster) {
 //   何もかも不自然だったため全削除した。オブジェクト自体もcreateRecordDisplay側から
 //   削除済み(needle/groove変数・returnの両方)。
 //   トーンアーム自体は今後、別途新しく作り直す予定。新しい実装が完成したら、
-//   トーンアームが盤面(金のリング)に触れたタイミングで下のrevealSolarSystem(record)
+//   トーンアームが盤面(金のリング)に触れたタイミングで下のfinishCoronationSequence(record)
 //   を呼ぶ形に差し替えてください(内容は「リング接触時に太陽系を召喚する」処理その
 //   ものなので、トーンアームの見た目に関係なく再利用できるはずです)。
 //   ★ 暫定措置: 新しいトーンアームができるまでの間、バルジのフェードインが終わった
-//     直後にrevealSolarSystem(record)を直接呼び、太陽系が即座に召喚されるように
+//     直後にfinishCoronationSequence(record)を直接呼び、太陽系が即座に召喚されるように
 //     してある(startBulgeReveal内を参照)。
 
-// ③本編: リングに接触した(=今は暫定的に、バルジ出現直後に即時呼ばれる)ら太陽系を召喚する。
-// トーンアーム実装後は、トーンアームが盤面に接触したタイミングでこの関数を呼ぶだけでよい。
-function revealSolarSystem(record) {
-  const { solarSystem, galaxy, crossfadeRing } = record;
-  // 軌道の中心: 水平位置(x,z)は銀河の現在位置、高さ(y)は今見えている金のリング
-  // (crossfadeRing。バナナと同じ高さ=数式と同じ高さ)に合わせる。
-  const orbitCenter = new THREE.Vector3();
-  galaxy.starsGroup.getWorldPosition(orbitCenter);
-  const galaxyY = orbitCenter.y;
-  crossfadeRing.updateWorldMatrix(true, false);
-  orbitCenter.y = new THREE.Vector3().setFromMatrixPosition(crossfadeRing.matrixWorld).y;
-  // 高さの確認用ログ: 数式(RECORD_ANCHOR)・リング(=軌道の中心)・バナナ・銀河が揃っているか。
-  // 揃っていなければ警告を出す(銀河だけズレている場合は、銀河側の配置を直す必要がある)。
-  const bananaY = record.bananaMesh.getWorldPosition(new THREE.Vector3()).y;
-  console.log('[revealSolarSystem] 高さ 数式:', RECORD_ANCHOR.y, '/ リング(軌道):', orbitCenter.y,
-    '/ バナナ:', bananaY, '/ 銀河:', galaxyY);
-  if (Math.abs(galaxyY - orbitCenter.y) > 0.01) {
-    console.warn('[revealSolarSystem] 銀河の高さがリング(軌道)とずれています:', galaxyY - orbitCenter.y);
-  }
-  // 太陽系を召喚する。軌道の半径は拡大リング(growCrossfadeRingの目標=ORBIT_RADIUS_BASE)と同じ。
-  startSolarSystem(solarSystem, orbitCenter);
+// ③本編: バルジ出現後の締め。拡大しておいた金のリング(crossfadeRing)を消し、完了を通知してphaseを'done'にする(以前はここで太陽系も召喚していた)。
+function finishCoronationSequence(record) {
   // ★ 2026-09-17 再訂正(ご指摘反映): 「太陽が到達して消える金のリング」は、
   //   もともと上(バナナと同じ高さ)にあるcrossfadeRing自身(=拡大したリングその
   //   もの)。新設した別リングではない。crossfadeRingはcarousel本来のリング
-  //   (universe.goldenRing)とは無関係なので、消してもcarousel側は一切影響を
+  //   (auditorium.goldenRing)とは無関係なので、消してもcarousel側は一切影響を
   //   受けない。
   //   hideCrossfadeRingのフェードが実際に完了した後(onComplete)でrecord.onSequenceComplete
   //   を呼ぶ(tripod⇔鏡tripodの表示をcarousel側へ確定させる後始末はfinishTripodRingSwapが行う)。
@@ -486,24 +453,21 @@ function revealSolarSystem(record) {
     onComplete: () => {
       // ★ 2026-09-15 追加(ご指示反映): 「リングが消滅すると同時にcarousel一式(数式・ih・
       //   下側のリング)に交換してほしい。以後、リング・鏡tripod・バナナは二度と登場させない」
-      //   への対応。tripod⇔鏡tripodの切り替え(tripodRingSwap.js)は、以後もう
+      //   への対応。tripod⇔鏡tripodの切り替え(旧tripodRingSwap(廃止済み))は、以後もう
       //   scroll駆動では使わない片道切符の演出だったので、ここで「終了」を通知して
       //   carousel側へ強制的に戻してもらう。実体(finishTripodRingSwap呼び出し)は
       //   main.js側でこのフックに差し込まれている(createRecordDisplay時点ではまだ
       //   tripodRingSwapのインスタンスが存在しないため)。
       if (record.onSequenceComplete) record.onSequenceComplete();
     },
-  }); // ★ 太陽がリングに到達したので、拡大しておいた金のリング(crossfadeRing)を消す
+  }); // ★ 拡大しておいた金のリング(crossfadeRing)を消す
   record.phase = 'done';
 }
 
-// ①②③本編: バナナクリックで最初に呼ぶ。戴冠(5秒)→バナナ消滅+バルジ出現(3秒)→revealSolarSystem。
+// ①②③本編: バナナクリックで最初に呼ぶ。戴冠(5秒)→バナナ消滅+バルジ出現(3秒)→finishCoronationSequence。
 function playCoronationSequence(record) {
   if (record.coronationStarted) return; // 二重発火防止
   record.coronationStarted = true;
-  // ★ バグ修正: 演出中はmirrorVisualAnchor(バナナ・王冠・バルジの親)がスクロールで
-  //   非表示に戻されないよう、tripodRingSwap.js側に強制表示を依頼する。
-  record.coronationLockVisible = true;
 
   const { bananaMesh, crownGroup, bulge, galaxy, tonearm, galaxyCenter } = record;
   const caption = getCoronationCaption();
@@ -514,12 +478,12 @@ function playCoronationSequence(record) {
   caption.setText(CORONATION_TEXT);
   getSourceCaption().setText(CORONATION_WORK);
   // ★ ご指摘反映: テキスト表示と同時に、バナナと同じ高さにある既存のリング
-  //   (crossfadeRing)自身を「太陽系のらせん軌道(=ORBIT_RADIUS_BASE。
-  //   revealSolarSystem側が太陽系の主軌道に使う半径と同じ値)」の
+  //   (crossfadeRing)自身を「太陽系のらせん軌道(=BULGE_REFERENCE_RADIUS。
+  //   finishCoronationSequence側が太陽系の主軌道に使う半径と同じ値)」の
   //   サイズまで拡大しておく。新しいリングを追加で発生させるのではなく、この
   //   もとからあるリング自身を拡大する。太陽系が実際に召喚された時点
-  //   (revealSolarSystem内)で、この拡大したリングを消す。
-  growCrossfadeRing(record.crossfadeRing, { targetRadius: ORBIT_RADIUS_BASE, duration: CORONATION_DURATION });
+  //   (finishCoronationSequence内)で、この拡大したリングを消す。
+  growCrossfadeRing(record.crossfadeRing, { targetRadius: BULGE_REFERENCE_RADIUS, duration: CORONATION_DURATION });
   // ★ 2026-09-19 追加(ご指示反映): 「BLOOMリング(=crossfadeRing)が大きくなるときに、
   //   一緒に銀河も拡大。トーンアームも位置とスケールを変えてほしい」への対応。
   //   上のgrowCrossfadeRingと全く同じ秒数・イージングで、1本のtweenが持つ倍率k(1→
@@ -635,7 +599,7 @@ function playCoronationSequence(record) {
     //   (=太陽軌道の半径ぴったりに見えるはずが、直径サイズまで膨らんで見えていた)。
     //   bulgeのローカルscaleの目標値を1/GALAXY_OVERVIEW_SCALEにしておくことで、
     //   親の2倍と打ち消し合い、実際の見た目のサイズを元通り(太陽軌道の半径サイズ)に戻す。
-    const bulgeTargetScale = 1 / GALAXY_OVERVIEW_SCALE;
+    const bulgeTargetScale = GALAXY_HOLE_SCALE / GALAXY_OVERVIEW_SCALE; // 穴(GALAXY_HOLE_SCALE倍)に合わせて大きくする
     gsap.to(bulgeReveal, {
       t: 1,
       duration: BULGE_REVEAL_FADE_DURATION,
@@ -660,13 +624,69 @@ function playCoronationSequence(record) {
     //   「針が銀河中心へゆっくり近づき、金のリングに触れたら太陽系召喚」という
     //   時間のかかる演出だったが、その置き換えとなるトーンアームはまだ未実装。
     //   新しいトーンアームが完成するまでの間、バルジのフェードインが終わったら
-    //   直接revealSolarSystem(record)を呼び、太陽系がすぐに召喚されるようにして
+    //   直接finishCoronationSequence(record)を呼び、太陽系がすぐに召喚されるようにして
     //   ある。トーンアーム実装時は、このsetTimeout呼び出しを、トーンアームが
     //   盤面に接触した瞬間のコールバックに置き換えてください。
     setTimeout(() => {
-      revealSolarSystem(record); // ③
+      finishCoronationSequence(record); // ③
     }, BULGE_REVEAL_FADE_DURATION * 1000);
   }
+}
+//   従来(k=GALAXY_OVERVIEW_SCALE)と同じ見た目の実寸になるように合わせてある。
+// 銀河(galaxy.starsGroup)とトーンアームをGALAXY_OVERVIEW_SCALE(=2)倍へ拡大する。戴冠の成功・失敗どちらでも呼ぶ(playCoronationSequence内のtweenと同じ内容)。
+export function growGalaxyToOverviewScale(record, { duration = 8, ease = 'power2.inOut' } = {}) {
+  const { galaxy, tonearm, galaxyCenter } = record;
+  if (!galaxy || !galaxy.starsGroup) return;
+  const pivotOffset = tonearm ? tonearm.position.clone().sub(galaxyCenter) : null;
+  if (record.overviewScaleTween) record.overviewScaleTween.kill();
+  const st = { k: galaxy.starsGroup.scale.x || 1 };
+  record.overviewScaleTween = gsap.to(st, {
+    k: GALAXY_OVERVIEW_SCALE, duration, ease,
+    onUpdate: () => {
+      galaxy.starsGroup.scale.setScalar(st.k);
+      if (tonearm) {
+        tonearm.position.copy(galaxyCenter).addScaledVector(pivotOffset, st.k);
+        tonearm.scale.setScalar(st.k);
+      }
+    },
+  });
+}
+
+// ★ 2026-11-09 追加: 戴冠(fairyTale.js)でバナナと冠が沈みきったあとに呼ぶ「バルジへの切り替え」。
+//   startBulgeRevealのバルジ部分(拡大+フェードイン+回転+穴)だけを取り出したもの。バナナ・冠(record側)の消滅は含まない。
+//   銀河(starsGroup)の拡大tweenは走らせないので、バルジ・穴の大きさは現在のstarsGroupの倍率kで割って、
+// 戴冠失敗時: バルジは出さず、銀河の中心に穴だけをあける(大きさは成功時と同じ。バナナが残ってその場所を占める)。
+//   穴の半径(starsGroupのローカル値)は、銀河が最終倍率(GALAXY_OVERVIEW_SCALE)になった状態で成功時と同じ見た目になる値。
+export function openGalaxyHole(record, { duration = BULGE_REVEAL_FADE_DURATION } = {}) {
+  const { galaxy } = record;
+  if (!galaxy) return;
+  const st = { t: 0 };
+  setGalaxyHole(galaxy, 0, 0);
+  gsap.to(st, { t: 1, duration, onUpdate: () => setGalaxyHole(galaxy, GALAXY_HOLE_RADIUS * st.t, st.t) });
+}
+
+export function revealBulgeAfterCrowning(record, { duration = BULGE_REVEAL_FADE_DURATION, onComplete } = {}) {
+  const { bulge, galaxy } = record;
+  if (!bulge || !galaxy) { if (onComplete) onComplete(); return; }
+  const k = (galaxy.starsGroup && galaxy.starsGroup.scale.x) || 1;
+  const targetScale = GALAXY_HOLE_SCALE / k; // 穴(GALAXY_HOLE_SCALE倍)に合わせてバルジも大きくする
+  const holeRadius = GALAXY_HOLE_RADIUS * GALAXY_OVERVIEW_SCALE / k;
+  bulge.visible = true;
+  bulge.scale.setScalar(BULGE_REVEAL_START_SCALE);
+  bulge.userData.materials.forEach((m) => { m.uniforms.uAlpha.value = 0; });
+  setGalaxyHole(galaxy, 0, 0);
+  const st = { t: 0 };
+  gsap.to(st, {
+    t: 1, duration,
+    onUpdate: () => {
+      bulge.userData.materials.forEach((m) => { m.uniforms.uAlpha.value = st.t; });
+      bulge.scale.setScalar(THREE.MathUtils.lerp(BULGE_REVEAL_START_SCALE, targetScale, st.t));
+      setGalaxyHole(galaxy, holeRadius * st.t, st.t);
+    },
+    onComplete: () => { if (onComplete) onComplete(); },
+  });
+  bulge.rotation.y = -Math.PI * 2 * BULGE_REVEAL_SPINS * BULGE_REVEAL_SPIN_DIR;
+  gsap.to(bulge.rotation, { y: 0, duration, ease: BULGE_REVEAL_EASE });
 }
 // ══════════════════════════════════════════════════════════════
 // ▲▲▲ バナナクリック演出 ここまで ▲▲▲
@@ -675,7 +695,7 @@ function playCoronationSequence(record) {
 // ══════════════════════════════════════════════════════════════
 // ▼▼▼ トーンアーム(ガラス製) ▼▼▼
 // ══════════════════════════════════════════════════════════════
-// ★ 2026-09-17 追加(ご指示反映): universe-glass-preview.html(トーンアーム
+// ★ 2026-09-17 追加(ご指示反映): auditorium-glass-preview.html(トーンアーム
 //   configuratorで作り込んだ最終形)の形状生成コード・ガラスマテリアルをそのまま
 //   移植した。
 //   ★ 2026-09-18 追加(ご指示反映): 「回転軸側(pivot)を固定して、針側が回転する
@@ -688,8 +708,8 @@ function playCoronationSequence(record) {
 //     回転する点が異なるため、計算をベクトルで一般化してある(下記
 //     computeTonearmPhiForRadius参照)。
 //   ★ 配置の向き(「右」「奥」)は、プレビュー側では固定のワールドX/Z軸を使っていたが、
-//     このプロジェクトの宇宙ページのカメラは(config.jsの)UNIVERSE_CAMERA_POS→
-//     UNIVERSE_CAMERA_TARGETという特定方向を向いているため、ワールド軸そのままでは
+//     このプロジェクトのオーディトリアムのカメラは(config.jsの)AUDITORIUM_CAMERA_POS→
+//     AUDITORIUM_CAMERA_TARGETという特定方向を向いているため、ワールド軸そのままでは
 //     「カメラから見て銀河の右側」になるとは限らない。そこで、カメラの視線方向から
 //     「カメラの右」「カメラの奥」を計算し、pivotの位置の基準にしている
 //     (=常にカメラから見て銀河の右奥の角に取り付いているように見える)。
@@ -880,12 +900,12 @@ function buildTonearmGeometry(p, origin, rightDir, backDir) {
   return geo;
 }
 
-// カメラ(UNIVERSE_CAMERA_POS→UNIVERSE_CAMERA_TARGET)から見た「右」「奥」の水平単位
-// ベクトルを求める。cameraの実際のquaternionではなく、宇宙ページの基準視点(config.js
-// の定数)から計算するため、宇宙ページに入る前でも(=makeTonearm呼び出し時点でも)
+// カメラ(AUDITORIUM_CAMERA_POS→AUDITORIUM_CAMERA_TARGET)から見た「右」「奥」の水平単位
+// ベクトルを求める。cameraの実際のquaternionではなく、オーディトリアムの基準視点(config.js
+// の定数)から計算するため、オーディトリアムに入る前でも(=makeTonearm呼び出し時点でも)
 // 正しい値が求まる。
 function computeTonearmCameraAxes() {
-  const forward = new THREE.Vector3().subVectors(UNIVERSE_CAMERA_TARGET, UNIVERSE_CAMERA_POS);
+  const forward = new THREE.Vector3().subVectors(AUDITORIUM_CAMERA_TARGET, AUDITORIUM_CAMERA_POS);
   forward.y = 0; // 水平成分だけを使う(仰角があっても、アームは常に銀河の円盤と同じ水平面に置く)
   forward.normalize();
   const worldUp = new THREE.Vector3(0, 1, 0);
@@ -1107,11 +1127,11 @@ function triggerTrumpet(record) {
   const scale = TRUMPET_TARGET_RADIUS / trumpetApi.baseRadius;
   trumpetGroup.scale.setScalar(scale);
 
-  // 位置: カメラ(UNIVERSE_CAMERA_POS→UNIVERSE_CAMERA_TARGET)から見て、
+  // 位置: カメラ(AUDITORIUM_CAMERA_POS→AUDITORIUM_CAMERA_TARGET)から見て、
   // レコード(銀河)の左奥。高さは銀河半径と同程度(TRUMPET_HEIGHT_ABOVE_RECORD)。
   // 奥行き(forward)と左(-camRight)を別々の比率でオフセットできるようにしてある
   // (奥に置きすぎるとホーンの奥側がカメラの画角から外れてしまうため)。
-  const forward = UNIVERSE_CAMERA_TARGET.clone().sub(UNIVERSE_CAMERA_POS).normalize();
+  const forward = AUDITORIUM_CAMERA_TARGET.clone().sub(AUDITORIUM_CAMERA_POS).normalize();
   const worldUp = new THREE.Vector3(0, 1, 0);
   const camRight = new THREE.Vector3().crossVectors(forward, worldUp).normalize();
   trumpetGroup.position.copy(galaxyCenter)
@@ -1178,7 +1198,7 @@ function triggerTrumpet(record) {
 const SCROLL_SWITCH = 600;         // ここまでスクロールすると鏡側を向き切る(仮値。「切り替え方は適当でよい」ため単純な線形)
 // 「最後になったら、下スクロールでカメラを引いてレコード全体が見えるように」の反映:
 // phase==='done'到達後、さらにこのぶんスクロールするとカメラが引き切る(仮値)。
-// phase==='done'は、バナナクリック演出の最後(revealSolarSystem呼び出し時)に到達する。
+// phase==='done'は、バナナクリック演出の最後(finishCoronationSequence呼び出し時)に到達する。
 const SCROLL_PULLBACK_RANGE = 900;
 export const SCROLL_MAX = SCROLL_SWITCH + SCROLL_PULLBACK_RANGE; // main.js側でスクロール量をこの範囲にクランプする
 const VIEW_MIX_SMOOTHING = 4.0;    // カメラの向き変更(controls.target)を軽くスムージングする係数(仮値)
@@ -1235,7 +1255,7 @@ function createMirrorMaterial() {
     metalness: 1,
     roughness: MIRROR_ROUGHNESS,
     envMap: renderTarget.texture,
-    transparent: true, // tripod/ringスワップ演出(tripodRingSwap.js)でopacityをクロスフェードするため
+    transparent: true, // tripod/ringスワップ演出(旧tripodRingSwap(廃止済み))でopacityをクロスフェードするため
   });
   return { material, cubeCamera };
 }
@@ -1248,15 +1268,15 @@ function createMirrorMaterial() {
 //       自身。新しいリングを追加で下に発生させて拡大するのではない。
 //     - 拡大したcrossfadeRingは、太陽がリングに到達したら「消滅」する
 //       (=拡大したリングそのものが消える。従来通りの見た目のまま)。
-//     - 消滅後、carousel側と同じ「下側」に新たに現れるのはuniverse.goldenRing
+//     - 消滅後、carousel側と同じ「下側」に新たに現れるのはauditorium.goldenRing
 //       (carousel本来のリング)。こちらは拡大させず通常サイズのまま、鏡tripodと
-//       同じ鏡面のリアルな金の質感にする(universe.js側でマテリアルを用意し、
+//       同じ鏡面のリアルな金の質感にする(auditorium.js側でマテリアルを用意し、
 //       ここでenvMapだけ渡す。新たにCubeCameraを増やすと重くなるため、鏡と
 //       同じ1つを使い回している)。
 //   orbitRing(専用の別メッシュ)は不要になったため削除した。
 // ══════════════════════════════════════════════════════════════
-const CROSSFADE_RING_TUBE_RADIUS = AXIS_LENGTH * 0.018; // universe.js側のRING_TUBE_RADIUSと同じ値(仮値)
-const CROSSFADE_RING_COLOR = 0xffcc33; // universe.js側のRING_COLORと同じ値(仮値)。非金属な単色に戻した
+const CROSSFADE_RING_TUBE_RADIUS = AXIS_LENGTH * 0.018; // auditorium.js側のRING_TUBE_RADIUSと同じ値(仮値)
+const CROSSFADE_RING_COLOR = 0xffcc33; // auditorium.js側のRING_COLORと同じ値(仮値)。非金属な単色に戻した
 
 // RING_DOWN_Y⇔バナナの高さを上下する「引き継ぎ」用のリング(従来通りの見た目)。
 // 戴冠演出中はこのリング自身が拡大→消滅する(下記growCrossfadeRing/hideCrossfadeRing)。
@@ -1264,7 +1284,7 @@ function makeCrossfadeRing() {
   const geometry = new THREE.TorusGeometry(MIRROR_TRIPOD_RADIUS, CROSSFADE_RING_TUBE_RADIUS, 16, 128);
   const material = new THREE.MeshBasicMaterial({ color: CROSSFADE_RING_COLOR, transparent: true, opacity: 0 });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.x = Math.PI / 2; // universe.js側のgoldenRingと同じく水平(XZ平面)へ寝かせる
+  mesh.rotation.x = Math.PI / 2; // auditorium.js側のgoldenRingと同じく水平(XZ平面)へ寝かせる
   // ★ 2026-09-17 追加(バグ修正): revealCrossfadeRingDrawing()がring.rotation.yで
   //   「描き始めの向き」をカメラ方向へ振り向かせているが、既定のEuler順序'XYZ'では
   //   X回転(この行の90°の寝かせ)が先に適用されるため、その後のY回転は「もう縦軸
@@ -1272,7 +1292,7 @@ function makeCrossfadeRing() {
   //   があった。順序を'YXZ'(先にYで世界の縦軸まわりに振り向かせ、その後にXで
   //   寝かせる)にすることで、常に水平を保ったまま向きだけを変えられるようにした。
   mesh.rotation.order = 'YXZ';
-  mesh.visible = false; // tripodRingSwap.js側がtripodRingRevealed成立時に初めて可視化する
+  mesh.visible = false; // 旧tripodRingSwap(廃止済み)側がtripodRingRevealed成立時に初めて可視化する
   mesh.userData.radius = MIRROR_TRIPOD_RADIUS; // 現在の「径」(太さは常にCROSSFADE_RING_TUBE_RADIUSのまま)
   return mesh;
 }
@@ -1298,7 +1318,7 @@ function setCrossfadeRingRadius(ring, radius) {
 //   向きをカメラ方向に固定した上で、径と同じくジオメトリを毎フレーム作り直すことで
 //   「輪が一周描かれながら現れる」演出にした。
 const RING_REVEAL_DURATION = 0.5; // 仮値。「スピードは速くてよい」の反映
-// carousel(universe.js側のtripod自転。rotateOnWorldAxisにrotationDelta=-ANGULAR_SPEEDを
+// carousel(auditorium.js側のtripod自転。rotateOnWorldAxisにrotationDelta=-ANGULAR_SPEEDを
 // 渡している=world Y軸まわりの負方向)と同じ向きに掃引するための符号(仮。逆に見えたら反転)。
 const RING_REVEAL_SWEEP_SIGN = -1;
 
@@ -1310,7 +1330,7 @@ function setCrossfadeRingArc(ring, arcFraction) {
   old.dispose();
 }
 
-// tripodクリック時、1回だけ呼ぶ。tripodRingSwap.js側から呼ばれる想定でexportしてある。
+// tripodクリック時、1回だけ呼ぶ。旧tripodRingSwap(廃止済み)側から呼ばれる想定でexportしてある。
 export function revealCrossfadeRingDrawing(ring, camera, { duration = RING_REVEAL_DURATION, onComplete } = {}) {
   // 「開始点は円でカメラに一番近い点」: 中心(リング自身のXZ座標)からカメラへ向かう
   // 方向がそのまま「円上の最近点」の方向になる。この角度をTorusのu=0(=描き始め)に
@@ -1393,23 +1413,22 @@ function makeBananaMesh() {
 }
 
 // scene/renderer: main.jsと同じもの。
-// deps: { camera, galaxy, solarSystem } ── いずれもmain.js側で既に作成済みの「既存インスタンス」を渡す。
-// solarSystemはrevealSolarSystem()内で太陽系(8惑星)を召喚する際に使う。
-export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSystem, universe, excludeFromBloom }) {
+// deps: { camera, galaxy, auditorium, excludeFromBloom } ── いずれもmain.js側で既に作成済みの「既存インスタンス」を渡す。
+export function createRecordDisplay(scene, renderer, { camera, galaxy, auditorium, excludeFromBloom }) {
   const { material: mirrorMaterial, cubeCamera } = createMirrorMaterial();
 
-  // universe.goldenRing(carouselの飾りリング)とは別の、この演出専用のリング。
-  // 位置(ringDownY↔バナナの高さの上下)はtripodRingSwap.js側が毎フレーム動かす。
+  // auditorium.goldenRing(carouselの飾りリング)とは別の、この演出専用のリング。
+  // 位置(ringDownY↔バナナの高さの上下)は旧tripodRingSwap(廃止済み)側が毎フレーム動かす。
   const crossfadeRing = makeCrossfadeRing();
   scene.add(crossfadeRing);
 
 
-  // ★ ご指摘反映: 「リアルな金のリング」はcarousel本来のリング(universe.goldenRing)
-  //   自身のこと(=下側に新しい専用リングを追加するのではない)。universe.js側で
+  // ★ ご指摘反映: 「リアルな金のリング」はcarousel本来のリング(auditorium.goldenRing)
+  //   自身のこと(=下側に新しい専用リングを追加するのではない)。auditorium.js側で
   //   マテリアルの種類(MeshStandardMaterial・metalness・roughness)は用意済みなので、
   //   ここでは鏡と同じCubeCamera環境マップ(mirrorMaterial.envMap)を渡すだけでよい
   //   (新たにCubeCameraを増やすと重くなるため、既存の1つを使い回している)。
-  universe.goldenRing.material.envMap = mirrorMaterial.envMap;
+  auditorium.goldenRing.material.envMap = mirrorMaterial.envMap;
 
   const apex = new THREE.Vector3(0, MIRROR_APEX_HEIGHT, 0);
 
@@ -1465,7 +1484,7 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   const growth = createGalaxyGrowth(scene, galaxy, camera);
 
   mirrorVisualAnchor.position.copy(computeMirrorGroupPosition());
-  mirrorVisualAnchor.visible = false; // 表示はtripodRingSwap.js側が一元管理する(swapT>=1で表示に切り替わる)
+  mirrorVisualAnchor.visible = false; // 表示は旧tripodRingSwap(廃止済み)側が一元管理する(swapT>=1で表示に切り替わる)
   scene.add(mirrorVisualAnchor);
 
   // mirrorGroup自体はpyramidMesh・bananaMeshどちらも子に持たなくなり、現在は見た目を
@@ -1485,7 +1504,7 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   // ★ バグ修正: 以前はここでmirrorGroup.positionを基準に一度だけcubeCameraの位置を決めて
   //   そのまま放置していた。しかしmirrorGroup自体は「物理的な鏡の位置」の記録用に生成時の
   //   位置(computeMirrorGroupPosition())のまま動かない一方、実際に見えているピラミッド
-  //   (mirrorVisualAnchor)はtripodRingSwap.js側で毎フレーム位置(特にy)を動かされる
+  //   (mirrorVisualAnchor)は旧tripodRingSwap(廃止済み)側で毎フレーム位置(特にy)を動かされる
   //   (tripodの降下に合わせてgroundYまで下りてくる)ため、両者の位置がどんどんズレていき、
   //   「本来ピラミッドがある場所とは全く違う高さ・位置から撮影した環境」がenvMapとして
   //   反射に使われてしまっていた。これが「反射面が裏返って見える/おかしい」ように見えていた
@@ -1515,21 +1534,13 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   trumpetApi.baseRadius = trumpetBaseSphere.radius;
 
   return {
-    scene, renderer, camera, galaxy, solarSystem, universe,
+    scene, renderer, camera, galaxy, auditorium,
     mirrorGroup, mirrorVisualAnchor, mirrorVisualHome: mirrorVisualAnchor.position.clone(),
     crossfadeRing,
     pyramidMesh, bananaMesh, crownGroup, bulge, tonearm, trumpetGroup, trumpetApi,
     growth, clickStar: null, clickStarRevealed: false,
-    galaxyCenter: galaxy.starsGroup.position.clone(), // ← 銀河の中心(生成時点で固定。針・ラッパの基準。太陽系の中心はrevealSolarSystemで別途求める)
+    galaxyCenter: galaxy.starsGroup.position.clone(), // ← 銀河の中心(生成時点で固定。針・ラッパの基準。太陽系の中心はfinishCoronationSequenceで別途求める)
     coronationStarted: false, // ← バナナクリック演出の二重発火防止
-    // ★ 2026-09-16 追加(バグ修正): 「バルジが出現していない」への対応。戴冠演出中、
-    //   スクロールが(何らかの理由で)後方向に動くと、tripodRingSwap.js側の
-    //   updateTripodRingSwapがrecord.viewMixCurrentを見てmirrorVisualAnchor.visibleを
-    //   falseに戻してしまい、その子であるbulge/バナナ/王冠ごと非表示になってしまう
-    //   可能性があった。演出中(coronationStarted〜finishTripodRingSwapまで)は
-    //   このフラグをtrueにして、tripodRingSwap.js側にmirrorVisualAnchorを強制的に
-    //   表示させ続けてもらう。
-    coronationLockVisible: false,
     cubeCamera, mirrorLookTarget,
     viewMixTarget: 0,  // 0=carousel側を向く / 1=鏡側を向く。applyScrollが更新する
     viewMixCurrent: 0, // 実際にcontrols.targetへ適用する、軽くスムージングした値
@@ -1538,11 +1549,11 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
     pullbackTarget: 0,  // 0〜1。applyScrollが'done'到達後のスクロール量から算出する
     pullbackCurrent: 0, // 実際にカメラへ適用する、軽くスムージングした値
     pullbackApplied: 0, // 直前フレームでcamera.positionへ実際に足した量(次フレームで打ち消すために保持)
-    // 'inactive' → 'mirror' → 'done'(revealSolarSystemが呼ばれた時点)
+    // 'inactive' → 'mirror' → 'done'(finishCoronationSequenceが呼ばれた時点)
     phase: 'inactive',
     // ★ 2026-09-15 追加: バナナクリック後の演出(戴冠→リング拡大→リング消滅)が完了した
     //   瞬間(onRingContact)に呼ばれるフック。createRecordDisplay時点ではまだ
-    //   tripodRingSwap.jsのインスタンスが存在しない(main.js側の生成順序がrecord→
+    //   旧tripodRingSwap(廃止済み)のインスタンスが存在しない(main.js側の生成順序がrecord→
     //   tripodRingSwapのため)ので、ここではnullのまま返し、main.js側で
     //   record.onSequenceComplete = () => finishTripodRingSwap(tripodRingSwap) のように
     //   後から差し込んでもらう想定。未設定なら何もしない(呼び出し側はnullチェック不要)。
@@ -1550,12 +1561,12 @@ export function createRecordDisplay(scene, renderer, { camera, galaxy, solarSyst
   };
 }
 
-// enterUniverse完了時に呼ぶ: 鏡三角錐(+バナナ)を表示する。
+// enterAuditorium完了時に呼ぶ: 鏡三角錐(+バナナ)を表示する。
 export function startRecordDisplay(record) {
   if (!record || record.phase !== 'inactive') return;
   record.mirrorGroup.visible = true;
   record.phase = 'mirror';
-  // 銀河の育ち(サイト全体の累計)の最新値をサーバーから取る。宇宙ページに入った人だけが通る
+  // 銀河の育ち(サイト全体の累計)の最新値をサーバーから取る。オーディトリアムに入った人だけが通る
   // 場所なので、ページを開いただけの人はサーバーを使わない(無料枠を節約するため)。
   refreshGalaxyGrowth(record.growth);
 }
@@ -1600,7 +1611,7 @@ export function tryRecordClick(record, raycaster, { onNavigate } = {}) {
   if (hitsClickStar(record, raycaster) && playGalaxyContribution(record.growth)) return true;
 
   // 鏡: three.jsのRaycasterはvisible=falseでも判定してしまう(明示的にチェックしないと
-  // 素通りする)ため、mirrorVisualAnchor.visible(=tripodRingSwap.js側で鏡tripodが実際に
+  // 素通りする)ため、mirrorVisualAnchor.visible(=旧tripodRingSwap(廃止済み)側で鏡tripodが実際に
   // 表示に切り替わっているか)を明示的に見て、「出現しているときだけクリック可能」にする。
   if (!record.mirrorVisualAnchor.visible) return false;
 
@@ -1652,18 +1663,18 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
   }
 
   // ★ 2026-09-11 修正(ご指示反映): 「カメラは常に固定(controls.target/positionを一切
-  //   動かさない)」方針に変更した。以前はここでcontrols.targetをUNIVERSE_CAMERA_TARGET⇔
+  //   動かさない)」方針に変更した。以前はここでcontrols.targetをAUDITORIUM_CAMERA_TARGET⇔
   //   mirrorLookTargetの間で補間していたが、それが「入れ替え完了後もカメラが動き続ける
   //   (=画面奥の銀河まで一緒に動いてしまう)」バグの原因だった。
-  //   tripod/リングの入れ替え演出(見え方の変化)は、カメラ側ではなくtripodRingSwap.js側で
+  //   tripod/リングの入れ替え演出(見え方の変化)は、カメラ側ではなく旧tripodRingSwap(廃止済み)側で
   //   tripod・リング・鏡tripod自体の位置を動かすことで表現する(このファイルではcontrols.target
   //   にはもう触れない)。mirrorLookTargetは現在カメラ制御には使っていないが、pullback(休眠中。
   //   phase==='done'到達時のみ有効)の向き計算に使う初期値としてこのまま残してある。
   // ★ controls.update()自体は、record.phase!=='inactive'の間もユーザーのドラッグ操作
   //   (OrbitControlsの自由回転)を反映させるために毎フレーム呼び続ける必要があるため、
-  //   このifブロックごと削除はしないこと(削除すると宇宙ページでカメラが一切回せなくなる)。
+  //   このifブロックごと削除はしないこと(削除するとオーディトリアムでカメラが一切回せなくなる)。
   if (controls && record.phase !== 'inactive') {
-    // mirrorVisualAnchorはtripodRingSwap.js側で位置(y)が決まるため、mirrorLookTargetも
+    // mirrorVisualAnchorは旧tripodRingSwap(廃止済み)側で位置(y)が決まるため、mirrorLookTargetも
     // 毎フレーム追従させ直す(現状はpullbackDirの初期値計算にしか使っていない休眠中の値)。
     record.mirrorLookTarget.set(0, record.mirrorVisualAnchor.position.y + MIRROR_APEX_HEIGHT, 0);
 
@@ -1677,7 +1688,7 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
     controls.update();
 
     // 「最後になったら、下スクロールでカメラを引いてレコード全体が見えるように」の反映。
-    // phase==='done'は、バナナクリック演出の最後(revealSolarSystem)で到達する。
+    // phase==='done'は、バナナクリック演出の最後(finishCoronationSequence)で到達する。
     const pullbackTargetNow = record.phase === 'done' ? record.pullbackTarget : 0;
     const pullbackSmoothing = 1 - Math.exp(-PULLBACK_SMOOTHING * deltaSeconds);
     record.pullbackCurrent = THREE.MathUtils.lerp(record.pullbackCurrent, pullbackTargetNow, pullbackSmoothing);
@@ -1686,7 +1697,7 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
   }
 
   // 鏡に映るシーンを毎フレーム撮影する(自分自身が映り込まないよう撮影中だけ非表示にする)。
-  // ★ バグ修正(ご指摘反映): 「鏡tripodが消えた後に登場する金のリング(universe.goldenRing)
+  // ★ バグ修正(ご指摘反映): 「鏡tripodが消えた後に登場する金のリング(auditorium.goldenRing)
   //   の上に、その後ずっとihがいる。ihは映っているか」への対応。
   //   以前はここが`if (!record.mirrorVisualAnchor.visible) return;`だけだったため、
   //   finishTripodRingSwap()がmirrorVisualAnchor.visible=falseにした瞬間(=まさに
@@ -1698,18 +1709,18 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
   //   鏡・金のリングのどちらか一方でも見えている間は撮影を続けるようにし、golden
   //   ring段階ではリング(=ihのすぐ下)側へcubeCameraを追従させる。
   const mirrorVisible = record.mirrorVisualAnchor.visible;
-  const goldenRing = record.universe ? record.universe.goldenRing : null;
+  const goldenRing = record.auditorium ? record.auditorium.goldenRing : null;
   const goldenRingVisible = !!(goldenRing && goldenRing.visible);
   if (!mirrorVisible && !goldenRingVisible) return;
   // ★ バグ修正: 撮影(=cubeCamera.update)の直前に、実際に見えている方
-  //   (鏡=mirrorVisualAnchor、または金のリング=goldenRing。どちらもtripodRingSwap.js側が
+  //   (鏡=mirrorVisualAnchor、または金のリング=goldenRing。どちらも旧tripodRingSwap(廃止済み)側が
   //   毎フレーム/切り替え時に位置を書き換えている)へcubeCameraの位置を追従させ直す。
   //   これを怠ると、撮影位置が実際の見た目の位置から乖離したままになり、反射が
   //   実際の見た目と食い違って見えてしまう(詳細はcreateRecordDisplay側のコメント参照)。
   if (mirrorVisible) {
     record.cubeCamera.position.copy(record.mirrorVisualAnchor.position).add(_cubeCameraOffset);
   } else {
-    // ★ ihはgoldenRingのすぐ上(universe.js側のIH_ABOVE_RING_MARGIN+バウンス)にいるので、
+    // ★ ihはgoldenRingのすぐ上(auditorium.js側のIH_ABOVE_RING_MARGIN+バウンス)にいるので、
     //   リング自身の高さそのものより少し上を撮影点にする(仮値。見ながら調整してください)。
     // carouselRootが縮小・移動していてもワールド座標で追従する(localのpositionではずれるため)
     goldenRing.getWorldPosition(_goldenRingWorldPos);
@@ -1740,7 +1751,7 @@ export function updateRecordDisplay(record, deltaSeconds, controls) {
 //     RECORD_PULLBACK_DISTANCE / PULLBACK_SMOOTHING は仮値です。
 //   - MIRROR_TARGET_PAGE('prism2.html'): 実際の配置パスに合わせて調整してください。
 //   - トーンアーム(旧・針)は2026-09-17に全削除し、今後新しく作り直す予定です。
-//     再実装する際は、盤面に接触したタイミングでrevealSolarSystem(record)を呼ぶ形に
+//     再実装する際は、盤面に接触したタイミングでfinishCoronationSequence(record)を呼ぶ形に
 //     すればよいはずです(戴冠演出側のsetTimeoutでの即時呼び出しを、その呼び出しに
 //     差し替えてください)。
 //   - 銀河を「右ドラッグで俯瞰後、スクロールで縮小させる」新しい演出は、このファイルの
