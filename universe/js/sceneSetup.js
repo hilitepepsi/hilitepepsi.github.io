@@ -103,7 +103,7 @@ const ROUND_BLOOM_STRENGTH = 1.0; // 仮値。config.js未対応のためここ�
 const ROUND_BLOOM_LAYER = 1; // カメラのlayersでこの層だけを見る/見ないを切り替えて、対象オブジェクトだけを撮影する
 
 // ── 疑似的な正射影(pseudo-orthographic) ────────────────────
-// ご指示「宇宙ページではあらかじめ正射影にしておき、右ドラッグで透視図モードに切り替える」の
+// ご指示「オーディトリアムではあらかじめ正射影にしておき、右ドラッグで透視図モードに切り替える」の
 // 反映。ただし three.js の単一カメラは PerspectiveCamera ⇔ OrthographicCamera を
 // 直接切り替えられない(別カメラを2台用意してレンダリングを丸ごと差し替える必要がある)ため、
 // 今回は「極端に狭いFOV + 十分に遠い距離」で見た目上ほぼ平行投影に近づける近似(=よくある
@@ -111,7 +111,7 @@ const ROUND_BLOOM_LAYER = 1; // カメラのlayersでこの層だけを見る/�
 // もし見た目の違いが気になる場合は、OrthographicCameraを別途用意し、
 // composer/bloomComposer両方のRenderPass.cameraを丸ごと差し替える実装に変更してください。
 //
-// ★ 「以前(universeページより前の段階)はカメラをひっくり返した状態で正射影だった」との
+// ★ 「以前(auditoriumページより前の段階)はカメラをひっくり返した状態で正射影だった」との
 //   ご説明があったが、その向き(camera.upの反転など)を今回そのまま踏襲すべきか不明なため、
 //   ここではcamera.upは変更していない(通常のWORLD_UP=(0,1,0)のまま)。もし反転が必要な
 //   場合は、setProjectionMix呼び出し側(main.js)でcamera.up.set(0,-1,0)等を
@@ -153,8 +153,8 @@ function makeProjectionMixer(camera) {
 export function createSceneSetup() {
   const scene = new THREE.Scene();
   // ★ 修正(ご指示反映): 「カメラのスケール範囲も10倍にしたい」への対応。このcameraは
-  //   home/universe/overviewすべてで共有されており、以前のfar=500では全く足りない。
-  //   実際に必要な距離を計算すると: カメラ距離(config.js UNIVERSE_CAMERA_DISTANCE=10000)
+  //   home/auditorium/overviewすべてで共有されており、以前のfar=500では全く足りない。
+  //   実際に必要な距離を計算すると: カメラ距離(config.js AUDITORIUM_CAMERA_DISTANCE=10000)
   //   + 戴冠後の銀河半径(galaxy.js GALAXY_RADIUS≈1176 × record.js GALAXY_OVERVIEW_SCALE=2
   //   ≈2352)で、カメラから銀河の最も遠い端まで約12,350。これより小さいfarだと
   //   銀河の奥側がクリップされて消える。余裕を見て far=20000 にした(単純な「10倍」=5000
@@ -167,7 +167,7 @@ export function createSceneSetup() {
   scene.add(camera); // ← 追加: camera.add(sprite)した子を描画するのに必要
   const lookTarget = new THREE.Vector3(0, 0, 0);
 
-  // ★ ご指示反映: 宇宙ページ(record.js側のtripod/mirror演出)ではあらかじめ疑似正射影
+  // ★ ご指示反映: オーディトリアム(record.js側のtripod/mirror演出)ではあらかじめ疑似正射影
   //   (mix=0)にしておく。それより前のページ(carousel等)は従来通りHOME_CAMERA_POS基準の
   //   通常の透視図のままにしたいので、main.js側で「carouselから切り替わるタイミング」に
   //   なったらsetProjectionMix(0)を呼んで疑似正射影へ切り替え、右ドラッグでsetProjectionMix(t)を
